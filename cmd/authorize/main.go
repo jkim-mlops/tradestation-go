@@ -28,7 +28,7 @@ const (
 	authorizeURL      = "https://signin.tradestation.com/authorize"
 	tokenURL          = "https://signin.tradestation.com/oauth/token"
 	audience          = "https://api.tradestation.com"
-	defaultRedirect   = "http://localhost:3000/callback"
+	defaultRedirect   = "http://localhost:8080/callback"
 	defaultScopes     = "openid offline_access MarketData ReadAccount Trade profile"
 	defaultRefreshSSM = "/tradestation/refresh-token"
 )
@@ -61,9 +61,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	srv := &http.Server{Handler: mux}
-	ln, err := net.Listen("tcp", ":3000")
+	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
-		log.Fatalf("bind :3000: %v", err)
+		log.Fatalf("bind :8080: %v", err)
 	}
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
