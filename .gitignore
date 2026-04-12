@@ -24,6 +24,10 @@ profile.cov
 go.work
 go.work.sum
 
+# CLI binaries
+/authorize
+/envgen
+
 # env file
 .env
 
