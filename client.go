@@ -104,6 +104,34 @@ type authTransport struct {
 }
 
 func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+
+	var body []byte
+	if req.Body != nil {
+		b, err := io.ReadAll(req.Body)
+		req.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("buffer request body: %w", err)
+		}
+		body = b
+		req.Body = io.NopCloser(bytes.NewReader(body))
+	}
+
+	req.Header.Set("Authorization", "Bearer "+t.client.currentAccessToken())
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+
+	resp.Body.Close()
+	if err := t.client.refreshAccessToken(req.Context()); err != nil {
+		return nil, err
+	}
+
+	if body != nil {
+		req.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	req.Header.Set("Authorization", "Bearer "+t.client.currentAccessToken())
 	return t.base.RoundTrip(req)
 }
 

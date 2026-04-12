@@ -268,3 +268,126 @@ func TestRefreshAccessToken_ErrorResponse(t *testing.T) {
 		t.Errorf("StatusCode = %d", apiErr.StatusCode)
 	}
 }
+
+func TestAuthTransport_AttachesBearer(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	c.mu.Lock()
+	c.accessToken = "initial-token"
+	c.mu.Unlock()
+
+	c.doJSON(context.Background(), "GET", "/", nil, nil, nil)
+	if gotAuth != "Bearer initial-token" {
+		t.Errorf("Authorization = %q", gotAuth)
+	}
+}
+
+func TestAuthTransport_RefreshOn401ThenRetry(t *testing.T) {
+	// Token endpoint: returns new-token
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"new-token","expires_in":1200}`))
+	}))
+	defer tokenSrv.Close()
+
+	// API endpoint: 401 on first call with "initial", 200 with "new-token".
+	var apiCalls int
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalls++
+		auth := r.Header.Get("Authorization")
+		if auth == "Bearer new-token" {
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(401)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = apiSrv.URL
+	c.tokenURL = tokenSrv.URL
+	c.mu.Lock()
+	c.accessToken = "initial"
+	c.mu.Unlock()
+
+	var out struct{ Ok bool }
+	if err := c.doJSON(context.Background(), "GET", "/", nil, nil, &out); err != nil {
+		t.Fatalf("doJSON: %v", err)
+	}
+	if !out.Ok {
+		t.Error("response not decoded")
+	}
+	if apiCalls != 2 {
+		t.Errorf("api calls = %d, want 2", apiCalls)
+	}
+}
+
+func TestAuthTransport_SecondRequestAlso401_ReturnsError(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"new","expires_in":1200}`))
+	}))
+	defer tokenSrv.Close()
+
+	var apiCalls int
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalls++
+		w.WriteHeader(401)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = apiSrv.URL
+	c.tokenURL = tokenSrv.URL
+
+	err := c.doJSON(context.Background(), "GET", "/", nil, nil, nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 401 {
+		t.Errorf("want *APIError 401, got %v", err)
+	}
+	if apiCalls != 2 {
+		t.Errorf("api calls = %d, want 2 (original + one retry)", apiCalls)
+	}
+}
+
+func TestAuthTransport_BodyReplayOn401(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"new","expires_in":1200}`))
+	}))
+	defer tokenSrv.Close()
+
+	var bodies []string
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if r.Header.Get("Authorization") == "Bearer new" {
+			w.Write([]byte(`{}`))
+			return
+		}
+		w.WriteHeader(401)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = apiSrv.URL
+	c.tokenURL = tokenSrv.URL
+
+	body := map[string]string{"hello": "world"}
+	if err := c.doJSON(context.Background(), "POST", "/", nil, body, nil); err != nil {
+		t.Fatalf("doJSON: %v", err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("bodies seen = %d, want 2", len(bodies))
+	}
+	if bodies[0] != bodies[1] {
+		t.Errorf("body not replayed: first=%q second=%q", bodies[0], bodies[1])
+	}
+	if bodies[0] != `{"hello":"world"}` {
+		t.Errorf("body shape wrong: %q", bodies[0])
+	}
+}
