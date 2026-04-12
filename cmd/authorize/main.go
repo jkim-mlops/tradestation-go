@@ -28,7 +28,7 @@ const (
 	authorizeURL      = "https://signin.tradestation.com/authorize"
 	tokenURL          = "https://signin.tradestation.com/oauth/token"
 	audience          = "https://api.tradestation.com"
-	defaultRedirect   = "http://localhost:8080/callback"
+	defaultRedirect   = "http://localhost:8080"
 	defaultScopes     = "openid offline_access MarketData ReadAccount Trade profile"
 	defaultRefreshSSM = "/tradestation/refresh-token"
 )
@@ -65,7 +65,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("bind :8080: %v", err)
 	}
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
 		q := r.URL.Query()
 		if got := q.Get("state"); got != state {
 			err := fmt.Errorf("state mismatch: got %q, want %q", got, state)
