@@ -1,42 +1,88 @@
 package tradestation
 
-import "time"
+import (
+	"encoding/json"
+	"strconv"
+	"time"
+)
+
+// StringFloat64 unmarshals from both JSON strings ("1.5") and numbers (1.5).
+type StringFloat64 float64
+
+func (f *StringFloat64) UnmarshalJSON(data []byte) error {
+	var n float64
+	if err := json.Unmarshal(data, &n); err == nil {
+		*f = StringFloat64(n)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return err
+	}
+	*f = StringFloat64(n)
+	return nil
+}
+
+// StringInt64 unmarshals from both JSON strings ("100") and numbers (100).
+type StringInt64 int64
+
+func (i *StringInt64) UnmarshalJSON(data []byte) error {
+	var n int64
+	if err := json.Unmarshal(data, &n); err == nil {
+		*i = StringInt64(n)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return err
+	}
+	*i = StringInt64(n)
+	return nil
+}
 
 // MarketData types
 
 type Bar struct {
-	High            float64   `json:"High"`
-	Low             float64   `json:"Low"`
-	Open            float64   `json:"Open"`
-	Close           float64   `json:"Close"`
-	TimeStamp       time.Time `json:"TimeStamp"`
-	TotalVolume     int64     `json:"TotalVolume"`
-	DownTicks       int64     `json:"DownTicks"`
-	DownVolume      int64     `json:"DownVolume"`
-	OpenInterest    int64     `json:"OpenInterest"`
-	IsRealtime      bool      `json:"IsRealtime"`
-	TotalTicks      int64     `json:"TotalTicks"`
-	UnchangedTicks  int64     `json:"UnchangedTicks"`
-	UnchangedVolume int64     `json:"UnchangedVolume"`
-	UpTicks         int64     `json:"UpTicks"`
-	UpVolume        int64     `json:"UpVolume"`
-	Epoch           int64     `json:"Epoch"`
-	BarStatus       string    `json:"BarStatus"`
+	High            StringFloat64 `json:"High"`
+	Low             StringFloat64 `json:"Low"`
+	Open            StringFloat64 `json:"Open"`
+	Close           StringFloat64 `json:"Close"`
+	TimeStamp       time.Time     `json:"TimeStamp"`
+	TotalVolume     StringInt64   `json:"TotalVolume"`
+	DownTicks       StringInt64   `json:"DownTicks"`
+	DownVolume      StringInt64   `json:"DownVolume"`
+	OpenInterest    StringInt64   `json:"OpenInterest"`
+	IsRealtime      bool          `json:"IsRealtime"`
+	TotalTicks      StringInt64   `json:"TotalTicks"`
+	UnchangedTicks  StringInt64   `json:"UnchangedTicks"`
+	UnchangedVolume StringInt64   `json:"UnchangedVolume"`
+	UpTicks         StringInt64   `json:"UpTicks"`
+	UpVolume        StringInt64   `json:"UpVolume"`
+	Epoch           StringInt64   `json:"Epoch"`
+	BarStatus       string        `json:"BarStatus"`
 }
 
 type Quote struct {
-	Symbol            string  `json:"Symbol"`
-	Ask               float64 `json:"Ask"`
-	AskSize           int64   `json:"AskSize"`
-	Bid               float64 `json:"Bid"`
-	BidSize           int64   `json:"BidSize"`
-	Last              float64 `json:"Last"`
-	LastSize          int64   `json:"LastSize"`
-	Volume            int64   `json:"Volume"`
-	Close             float64 `json:"Close"`
-	High52Week        float64 `json:"High52Week"`
-	Low52Week         float64 `json:"Low52Week"`
-	DailyOpenInterest int64   `json:"DailyOpenInterest"`
+	Symbol            string        `json:"Symbol"`
+	Ask               StringFloat64 `json:"Ask"`
+	AskSize           StringInt64   `json:"AskSize"`
+	Bid               StringFloat64 `json:"Bid"`
+	BidSize           StringInt64   `json:"BidSize"`
+	Last              StringFloat64 `json:"Last"`
+	LastSize          StringInt64   `json:"LastSize"`
+	Volume            StringInt64   `json:"Volume"`
+	Close             StringFloat64 `json:"Close"`
+	High52Week        StringFloat64 `json:"High52Week"`
+	Low52Week         StringFloat64 `json:"Low52Week"`
+	DailyOpenInterest StringInt64   `json:"DailyOpenInterest"`
 }
 
 type OptionsChain struct {
@@ -49,23 +95,23 @@ type OptionsExpiration struct {
 }
 
 type OptionsStrike struct {
-	StrikePrice float64     `json:"StrikePrice"`
-	Call        *OptionsLeg `json:"Call"`
-	Put         *OptionsLeg `json:"Put"`
+	StrikePrice StringFloat64 `json:"StrikePrice"`
+	Call        *OptionsLeg   `json:"Call"`
+	Put         *OptionsLeg   `json:"Put"`
 }
 
 type OptionsLeg struct {
-	Symbol            string  `json:"Symbol"`
-	Ask               float64 `json:"Ask"`
-	Bid               float64 `json:"Bid"`
-	Last              float64 `json:"Last"`
-	Volume            int64   `json:"Volume"`
-	OpenInterest      int64   `json:"OpenInterest"`
-	ImpliedVolatility float64 `json:"ImpliedVolatility"`
-	Delta             float64 `json:"Delta"`
-	Gamma             float64 `json:"Gamma"`
-	Theta             float64 `json:"Theta"`
-	Vega              float64 `json:"Vega"`
+	Symbol            string        `json:"Symbol"`
+	Ask               StringFloat64 `json:"Ask"`
+	Bid               StringFloat64 `json:"Bid"`
+	Last              StringFloat64 `json:"Last"`
+	Volume            StringInt64   `json:"Volume"`
+	OpenInterest      StringInt64   `json:"OpenInterest"`
+	ImpliedVolatility StringFloat64 `json:"ImpliedVolatility"`
+	Delta             StringFloat64 `json:"Delta"`
+	Gamma             StringFloat64 `json:"Gamma"`
+	Theta             StringFloat64 `json:"Theta"`
+	Vega              StringFloat64 `json:"Vega"`
 }
 
 // Brokerage types
@@ -77,50 +123,50 @@ type Account struct {
 }
 
 type Position struct {
-	AccountID         string  `json:"AccountID"`
-	Symbol            string  `json:"Symbol"`
-	Quantity          int64   `json:"Quantity"`
-	AveragePrice      float64 `json:"AveragePrice"`
-	Last              float64 `json:"Last"`
-	MarketValue       float64 `json:"MarketValue"`
-	UnrealizedPnL     float64 `json:"UnrealizedPL"`
-	LongShort         string  `json:"LongShort"`
-	AssetType         string  `json:"AssetType"`
-	ConversionRate    float64 `json:"ConversionRate"`
-	InitialMargin     float64 `json:"InitialMargin"`
-	MaintenanceMargin float64 `json:"MaintenanceMargin"`
-	TotalCost         float64 `json:"TotalCost"`
-	Timestamp         string  `json:"Timestamp"`
+	AccountID         string        `json:"AccountID"`
+	Symbol            string        `json:"Symbol"`
+	Quantity          StringInt64   `json:"Quantity"`
+	AveragePrice      StringFloat64 `json:"AveragePrice"`
+	Last              StringFloat64 `json:"Last"`
+	MarketValue       StringFloat64 `json:"MarketValue"`
+	UnrealizedPnL     StringFloat64 `json:"UnrealizedPL"`
+	LongShort         string        `json:"LongShort"`
+	AssetType         string        `json:"AssetType"`
+	ConversionRate    StringFloat64 `json:"ConversionRate"`
+	InitialMargin     StringFloat64 `json:"InitialMargin"`
+	MaintenanceMargin StringFloat64 `json:"MaintenanceMargin"`
+	TotalCost         StringFloat64 `json:"TotalCost"`
+	Timestamp         string        `json:"Timestamp"`
 }
 
 type Balance struct {
-	AccountID     string  `json:"AccountID"`
-	CashBalance   float64 `json:"CashBalance"`
-	BuyingPower   float64 `json:"BuyingPower"`
-	Equity        float64 `json:"Equity"`
-	MarketValue   float64 `json:"MarketValue"`
-	RealizedPnL   float64 `json:"RealizedPL"`
-	UnrealizedPnL float64 `json:"UnrealizedPL"`
+	AccountID     string        `json:"AccountID"`
+	CashBalance   StringFloat64 `json:"CashBalance"`
+	BuyingPower   StringFloat64 `json:"BuyingPower"`
+	Equity        StringFloat64 `json:"Equity"`
+	MarketValue   StringFloat64 `json:"MarketValue"`
+	RealizedPnL   StringFloat64 `json:"RealizedPL"`
+	UnrealizedPnL StringFloat64 `json:"UnrealizedPL"`
 }
 
 // Order Execution types
 
 type Order struct {
-	OrderID        string  `json:"OrderID"`
-	AccountID      string  `json:"AccountID"`
-	Symbol         string  `json:"Symbol"`
-	Quantity       int64   `json:"Quantity"`
-	FilledQuantity int64   `json:"FilledQuantity"`
-	OrderType      string  `json:"OrderType"`
-	LimitPrice     float64 `json:"LimitPrice"`
-	StopPrice      float64 `json:"StopPrice"`
-	Side           string  `json:"Side"`
-	Status         string  `json:"Status"`
-	Duration       string  `json:"Duration"`
-	FilledPrice    float64 `json:"FilledPrice"`
-	OpenedDateTime string  `json:"OpenedDateTime"`
-	ClosedDateTime string  `json:"ClosedDateTime"`
-	TimeInForce    string  `json:"TimeInForce"`
+	OrderID        string        `json:"OrderID"`
+	AccountID      string        `json:"AccountID"`
+	Symbol         string        `json:"Symbol"`
+	Quantity       StringInt64   `json:"Quantity"`
+	FilledQuantity StringInt64   `json:"FilledQuantity"`
+	OrderType      string        `json:"OrderType"`
+	LimitPrice     StringFloat64 `json:"LimitPrice"`
+	StopPrice      StringFloat64 `json:"StopPrice"`
+	Side           string        `json:"Side"`
+	Status         string        `json:"Status"`
+	Duration       string        `json:"Duration"`
+	FilledPrice    StringFloat64 `json:"FilledPrice"`
+	OpenedDateTime string        `json:"OpenedDateTime"`
+	ClosedDateTime string        `json:"ClosedDateTime"`
+	TimeInForce    string        `json:"TimeInForce"`
 }
 
 type OrderRequest struct {
