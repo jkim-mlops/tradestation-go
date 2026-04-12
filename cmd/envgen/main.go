@@ -15,6 +15,7 @@ import (
 func main() {
 	idParam := flag.String("id", "/tradestation/client-id", "SSM parameter name for client ID")
 	secretParam := flag.String("secret", "/tradestation/client-secret", "SSM parameter name for client secret")
+	refreshParam := flag.String("refresh", "/tradestation/refresh-token", "SSM parameter name for refresh token")
 	out := flag.String("out", ".env", "output file path")
 	flag.Parse()
 
@@ -30,7 +31,7 @@ func main() {
 	}
 
 	resp, err := ssm.NewFromConfig(cfg).GetParameters(ctx, &ssm.GetParametersInput{
-		Names:          []string{*idParam, *secretParam},
+		Names:          []string{*idParam, *secretParam, *refreshParam},
 		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
@@ -45,8 +46,9 @@ func main() {
 		values[aws.ToString(p.Name)] = aws.ToString(p.Value)
 	}
 
-	body := fmt.Sprintf("TRADESTATION_CLIENT_ID=%s\nTRADESTATION_CLIENT_SECRET=%s\n",
-		values[*idParam], values[*secretParam])
+	body := fmt.Sprintf(
+		"TRADESTATION_CLIENT_ID=%s\nTRADESTATION_CLIENT_SECRET=%s\nTRADESTATION_REFRESH_TOKEN=%s\n",
+		values[*idParam], values[*secretParam], values[*refreshParam])
 
 	if err := os.WriteFile(*out, []byte(body), 0o600); err != nil {
 		log.Fatalf("write %s: %v", *out, err)
