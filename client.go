@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 )
 
@@ -36,8 +37,9 @@ type Client struct {
 
 	onRotate func(newToken string)
 
-	http    *http.Client // wrapped in authTransport
-	rawHTTP *http.Client // plain — used only for /oauth/token
+	http     *http.Client // wrapped in authTransport
+	rawHTTP  *http.Client // plain — used only for /oauth/token
+	tokenURL string       // override in tests; defaults to signinBaseURL+"/oauth/token"
 }
 
 type Option func(*Client)
@@ -69,6 +71,7 @@ func NewClient(env Environment, clientID, clientSecret, refreshToken string, opt
 		refreshToken: refreshToken,
 		http:         &http.Client{Transport: http.DefaultTransport},
 		rawHTTP:      &http.Client{},
+		tokenURL:     signinBaseURL + "/oauth/token",
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -171,4 +174,56 @@ func parseAPIError(resp *http.Response) error {
 		}
 	}
 	return apiErr
+}
+
+func (c *Client) refreshAccessToken(ctx context.Context) error {
+	c.mu.Lock()
+	rt := c.refreshToken
+	c.mu.Unlock()
+
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("client_id", c.clientID)
+	form.Set("client_secret", c.clientSecret)
+	form.Set("refresh_token", rt)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("build refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.rawHTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("refresh: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return parseAPIError(resp)
+	}
+
+	var out struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return fmt.Errorf("decode refresh response: %w", err)
+	}
+
+	c.mu.Lock()
+	c.accessToken = out.AccessToken
+	var rotated string
+	if out.RefreshToken != "" && out.RefreshToken != c.refreshToken {
+		c.refreshToken = out.RefreshToken
+		rotated = out.RefreshToken
+	}
+	onRotate := c.onRotate
+	c.mu.Unlock()
+
+	if rotated != "" && onRotate != nil {
+		onRotate(rotated)
+	}
+	return nil
 }

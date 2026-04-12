@@ -173,3 +173,98 @@ func TestDoJSON_ErrorResponse_FallsBackToRawBody(t *testing.T) {
 		t.Errorf("got %+v", apiErr)
 	}
 }
+
+func TestRefreshAccessToken_HappyPath(t *testing.T) {
+	var gotForm url.Values
+	var gotCT string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCT = r.Header.Get("Content-Type")
+		r.ParseForm()
+		gotForm = r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"new-access","expires_in":1200}`))
+	}))
+	defer tokenSrv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.tokenURL = tokenSrv.URL
+
+	if err := c.refreshAccessToken(context.Background()); err != nil {
+		t.Fatalf("refreshAccessToken: %v", err)
+	}
+	if c.currentAccessToken() != "new-access" {
+		t.Errorf("accessToken = %q, want new-access", c.currentAccessToken())
+	}
+	if gotCT != "application/x-www-form-urlencoded" {
+		t.Errorf("Content-Type = %q", gotCT)
+	}
+	if gotForm.Get("grant_type") != "refresh_token" ||
+		gotForm.Get("client_id") != "id" ||
+		gotForm.Get("client_secret") != "secret" ||
+		gotForm.Get("refresh_token") != "refresh" {
+		t.Errorf("form wrong: %v", gotForm)
+	}
+}
+
+func TestRefreshAccessToken_RotatesRefreshToken(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"new-access","refresh_token":"rotated","expires_in":1200}`))
+	}))
+	defer tokenSrv.Close()
+
+	var rotated string
+	c := NewClient(Test, "id", "secret", "refresh",
+		WithRefreshTokenRotate(func(s string) { rotated = s }))
+	c.tokenURL = tokenSrv.URL
+
+	if err := c.refreshAccessToken(context.Background()); err != nil {
+		t.Fatalf("refreshAccessToken: %v", err)
+	}
+	if rotated != "rotated" {
+		t.Errorf("onRotate received %q, want rotated", rotated)
+	}
+	c.mu.Lock()
+	rt := c.refreshToken
+	c.mu.Unlock()
+	if rt != "rotated" {
+		t.Errorf("in-memory refresh token = %q, want rotated", rt)
+	}
+}
+
+func TestRefreshAccessToken_DoesNotCallRotateWhenSameToken(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"new","refresh_token":"refresh","expires_in":1200}`))
+	}))
+	defer tokenSrv.Close()
+
+	called := false
+	c := NewClient(Test, "id", "secret", "refresh",
+		WithRefreshTokenRotate(func(string) { called = true }))
+	c.tokenURL = tokenSrv.URL
+
+	c.refreshAccessToken(context.Background())
+	if called {
+		t.Error("onRotate should not fire when refresh token unchanged")
+	}
+}
+
+func TestRefreshAccessToken_ErrorResponse(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		w.Write([]byte(`{"Error":"invalid_grant","Message":"refresh token expired"}`))
+	}))
+	defer tokenSrv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.tokenURL = tokenSrv.URL
+
+	err := c.refreshAccessToken(context.Background())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 400 {
+		t.Errorf("StatusCode = %d", apiErr.StatusCode)
+	}
+}
