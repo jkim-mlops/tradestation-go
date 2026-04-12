@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -58,7 +60,11 @@ func main() {
 	errCh := make(chan error, 1)
 
 	mux := http.NewServeMux()
-	srv := &http.Server{Addr: ":3000", Handler: mux}
+	srv := &http.Server{Handler: mux}
+	ln, err := net.Listen("tcp", ":3000")
+	if err != nil {
+		log.Fatalf("bind :3000: %v", err)
+	}
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if got := q.Get("state"); got != state {
@@ -86,7 +92,7 @@ func main() {
 	})
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -181,8 +187,9 @@ func exchangeCode(ctx context.Context, clientID, clientSecret, code string) (*to
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("token endpoint: status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("token endpoint: status %d: %s", resp.StatusCode, body)
 	}
 
 	var out tokenResponse
