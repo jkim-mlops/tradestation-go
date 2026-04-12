@@ -2,8 +2,10 @@ package tradestation
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 type MarketDataService struct {
@@ -48,7 +50,22 @@ func (s *MarketDataService) GetBars(ctx context.Context, symbol string, params G
 }
 
 func (s *MarketDataService) GetQuote(ctx context.Context, symbols []string) ([]Quote, error) {
-	panic("not implemented") // Task 7
+	if len(symbols) == 0 {
+		return nil, errors.New("tradestation: GetQuote requires at least one symbol")
+	}
+	if len(symbols) > 50 {
+		return nil, errors.New("tradestation: GetQuote supports at most 50 symbols per request")
+	}
+
+	path := "/v3/marketdata/quotes/" + strings.Join(symbols, ",")
+
+	var resp struct {
+		Quotes []Quote `json:"Quotes"`
+	}
+	if err := s.client.doJSON(ctx, "GET", path, nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Quotes, nil
 }
 
 func (s *MarketDataService) GetOptionsChain(symbol string) (*OptionsChain, error) {
