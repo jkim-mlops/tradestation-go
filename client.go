@@ -1,7 +1,13 @@
 package tradestation
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"sync"
 )
 
@@ -96,4 +102,73 @@ type authTransport struct {
 
 func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(req)
+}
+
+func (c *Client) doJSON(
+	ctx context.Context,
+	method, path string,
+	query url.Values,
+	body, out any,
+) error {
+	var reqBody []byte
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal request body: %w", err)
+		}
+		reqBody = b
+	}
+
+	u := c.apiBase + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+
+	var bodyReader io.Reader
+	if reqBody != nil {
+		bodyReader = bytes.NewReader(reqBody)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("http do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return parseAPIError(resp)
+	}
+
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return nil
+}
+
+func parseAPIError(resp *http.Response) error {
+	raw, _ := io.ReadAll(resp.Body)
+	apiErr := &APIError{StatusCode: resp.StatusCode, RawBody: raw}
+	var parsed struct {
+		Error   string `json:"Error"`
+		Message string `json:"Message"`
+	}
+	if json.Unmarshal(raw, &parsed) == nil {
+		switch {
+		case parsed.Message != "":
+			apiErr.Message = parsed.Message
+		case parsed.Error != "":
+			apiErr.Message = parsed.Error
+		}
+	}
+	return apiErr
 }
