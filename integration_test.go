@@ -3,14 +3,39 @@
 package tradestation
 
 import (
+	"bufio"
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
 
+func loadEnvFile(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if os.Getenv(k) == "" {
+			os.Setenv(k, v)
+		}
+	}
+}
+
 func integrationClient(t *testing.T) *Client {
 	t.Helper()
+	loadEnvFile(".env")
 	id := os.Getenv("TRADESTATION_CLIENT_ID")
 	secret := os.Getenv("TRADESTATION_CLIENT_SECRET")
 	rt := os.Getenv("TRADESTATION_REFRESH_TOKEN")
