@@ -100,6 +100,15 @@ func TestIntegration_GetQuote_Multiple(t *testing.T) {
 	if len(quotes) != len(syms) {
 		t.Errorf("got %d quotes, want %d", len(quotes), len(syms))
 	}
+	got := make(map[string]bool, len(quotes))
+	for _, q := range quotes {
+		got[q.Symbol] = true
+	}
+	for _, s := range syms {
+		if !got[s] {
+			t.Errorf("missing quote for %s", s)
+		}
+	}
 }
 
 func TestIntegration_RefreshPath(t *testing.T) {
