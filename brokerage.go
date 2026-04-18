@@ -168,6 +168,23 @@ func (s *BrokerageService) GetHistoricalOrders(
 	)
 }
 
+func (s *BrokerageService) GetHistoricalOrdersByID(
+	ctx context.Context,
+	accountIDs, orderIDs []string,
+	since time.Time,
+	opts ...HistoricalOrdersOption,
+) (*OrdersResponse, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	if err := validateOrderIDs(orderIDs); err != nil {
+		return nil, err
+	}
+	basePath := "/v3/brokerage/accounts/" + strings.Join(accountIDs, ",") +
+		"/historicalorders/" + strings.Join(orderIDs, ",")
+	return s.historicalOrdersLoop(ctx, basePath, since, opts)
+}
+
 func (s *BrokerageService) historicalOrdersLoop(
 	ctx context.Context,
 	basePath string,

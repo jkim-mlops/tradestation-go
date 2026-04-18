@@ -410,3 +410,25 @@ func TestGetHistoricalOrders_ContextCancel(t *testing.T) {
 		t.Error("want context-cancelled error")
 	}
 }
+
+func TestGetHistoricalOrdersByID(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"Orders":[{"OrderID":"o1"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	since := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	_, err := svc.GetHistoricalOrdersByID(context.Background(), []string{"123"}, []string{"o1", "o2"}, since)
+	if err != nil {
+		t.Fatalf("GetHistoricalOrdersByID: %v", err)
+	}
+	if gotPath != "/v3/brokerage/accounts/123/historicalorders/o1,o2" {
+		t.Errorf("path = %q", gotPath)
+	}
+}
