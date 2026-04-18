@@ -1,6 +1,7 @@
 package tradestation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -36,4 +37,14 @@ func validateOrderIDs(ids []string) error {
 		}
 	}
 	return nil
+}
+
+func (s *BrokerageService) GetAccounts(ctx context.Context) ([]Account, error) {
+	var resp struct {
+		Accounts []Account `json:"Accounts"`
+	}
+	if err := s.client.doJSON(ctx, "GET", "/v3/brokerage/accounts", nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Accounts, nil
 }

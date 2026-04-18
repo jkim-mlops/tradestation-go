@@ -1,7 +1,10 @@
 package tradestation
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -73,4 +76,36 @@ func make25IDs() []string {
 		out[i] = "acct"
 	}
 	return out
+}
+
+func TestGetAccounts(t *testing.T) {
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"Accounts":[
+            {"AccountID":"123","AccountType":"Cash","Currency":"USD","Status":"Active"},
+            {"AccountID":"456","AccountType":"Margin","Currency":"USD","Status":"Active"}
+        ]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	accounts, err := svc.GetAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("GetAccounts: %v", err)
+	}
+	if gotPath != "/v3/brokerage/accounts" {
+		t.Errorf("path = %q, want /v3/brokerage/accounts", gotPath)
+	}
+	if gotAuth == "" {
+		t.Errorf("Authorization header missing")
+	}
+	if len(accounts) != 2 || accounts[0].AccountID != "123" || accounts[1].AccountType != "Margin" {
+		t.Errorf("decoded wrong: %+v", accounts)
+	}
 }
