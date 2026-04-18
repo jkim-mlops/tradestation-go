@@ -5,6 +5,7 @@ package tradestation
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -172,6 +173,16 @@ func TestIntegration_BogusSymbol(t *testing.T) {
 	// 4xx, may be 200 with empty bars. Adjust once integration run reveals truth.
 }
 
+func dumpJSON(t *testing.T, label string, v any) {
+	t.Helper()
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		t.Logf("%s: marshal error: %v", label, err)
+		return
+	}
+	t.Logf("%s:\n%s", label, b)
+}
+
 func TestIntegration_GetAccounts(t *testing.T) {
 	c := integrationClient(t)
 	svc := &BrokerageService{client: c}
@@ -185,6 +196,7 @@ func TestIntegration_GetAccounts(t *testing.T) {
 	if len(accounts) == 0 {
 		t.Fatal("no accounts returned — sandbox account required")
 	}
+	dumpJSON(t, "accounts", accounts)
 	for _, a := range accounts {
 		if a.AccountID == "" {
 			t.Errorf("account missing ID: %+v", a)
@@ -223,6 +235,7 @@ func TestIntegration_GetBalances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBalances: %v", err)
 	}
+	dumpJSON(t, "balances", resp)
 	if len(resp.Balances)+len(resp.Errors) != len(ids) {
 		t.Errorf("balances+errors = %d, want %d", len(resp.Balances)+len(resp.Errors), len(ids))
 	}
@@ -236,9 +249,11 @@ func TestIntegration_GetBalancesBOD(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if _, err := svc.GetBalancesBOD(ctx, ids); err != nil {
+	resp, err := svc.GetBalancesBOD(ctx, ids)
+	if err != nil {
 		t.Fatalf("GetBalancesBOD: %v", err)
 	}
+	dumpJSON(t, "bodBalances", resp)
 }
 
 func TestIntegration_GetPositions(t *testing.T) {
@@ -249,9 +264,11 @@ func TestIntegration_GetPositions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if _, err := svc.GetPositions(ctx, ids); err != nil {
+	resp, err := svc.GetPositions(ctx, ids)
+	if err != nil {
 		t.Fatalf("GetPositions: %v", err)
 	}
+	dumpJSON(t, "positions", resp)
 }
 
 func TestIntegration_GetOrders(t *testing.T) {
@@ -262,9 +279,11 @@ func TestIntegration_GetOrders(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if _, err := svc.GetOrders(ctx, ids); err != nil {
+	resp, err := svc.GetOrders(ctx, ids)
+	if err != nil {
 		t.Fatalf("GetOrders: %v", err)
 	}
+	dumpJSON(t, "orders", resp)
 }
 
 func TestIntegration_GetHistoricalOrders(t *testing.T) {
@@ -280,5 +299,5 @@ func TestIntegration_GetHistoricalOrders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHistoricalOrders: %v", err)
 	}
-	_ = resp
+	dumpJSON(t, "historicalOrders", resp)
 }
