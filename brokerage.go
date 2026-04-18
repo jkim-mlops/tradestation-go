@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const maxAccountIDsPerRequest = 25
@@ -132,4 +134,76 @@ func (s *BrokerageService) GetOrdersByID(ctx context.Context, accountIDs, orderI
 		return nil, err
 	}
 	return &out, nil
+}
+
+type historicalOrdersOpts struct {
+	maxPages int
+	pageSize int
+}
+
+type HistoricalOrdersOption func(*historicalOrdersOpts)
+
+func WithMaxPages(n int) HistoricalOrdersOption {
+	return func(o *historicalOrdersOpts) { o.maxPages = n }
+}
+
+func WithPageSize(n int) HistoricalOrdersOption {
+	return func(o *historicalOrdersOpts) { o.pageSize = n }
+}
+
+func (s *BrokerageService) GetHistoricalOrders(
+	ctx context.Context,
+	accountIDs []string,
+	since time.Time,
+	opts ...HistoricalOrdersOption,
+) (*OrdersResponse, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	return s.historicalOrdersLoop(
+		ctx,
+		"/v3/brokerage/accounts/"+strings.Join(accountIDs, ",")+"/historicalorders",
+		since,
+		opts,
+	)
+}
+
+func (s *BrokerageService) historicalOrdersLoop(
+	ctx context.Context,
+	basePath string,
+	since time.Time,
+	opts []HistoricalOrdersOption,
+) (*OrdersResponse, error) {
+	cfg := historicalOrdersOpts{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	q := url.Values{}
+	q.Set("since", since.UTC().Format("2006-01-02"))
+	if cfg.pageSize > 0 {
+		q.Set("pageSize", strconv.Itoa(cfg.pageSize))
+	}
+
+	agg := &OrdersResponse{}
+	for pages := 0; ; pages++ {
+		var page struct {
+			Orders    []Order        `json:"Orders"`
+			Errors    []AccountError `json:"Errors"`
+			NextToken string         `json:"NextToken"`
+		}
+		if err := s.client.doJSON(ctx, "GET", basePath, q, nil, &page); err != nil {
+			return nil, err
+		}
+		agg.Orders = append(agg.Orders, page.Orders...)
+		agg.Errors = append(agg.Errors, page.Errors...)
+		if page.NextToken == "" {
+			break
+		}
+		if cfg.maxPages > 0 && pages+1 >= cfg.maxPages {
+			break
+		}
+		q.Set("nextToken", page.NextToken)
+	}
+	return agg, nil
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestAccountError_JSONRoundtrip(t *testing.T) {
@@ -271,5 +272,141 @@ func TestGetOrdersByID_ValidationRejectsEmptyOrderIDs(t *testing.T) {
 	svc := &BrokerageService{client: c}
 	if _, err := svc.GetOrdersByID(context.Background(), []string{"123"}, nil); err == nil {
 		t.Error("want error for empty orderIDs")
+	}
+}
+
+func TestGetHistoricalOrders_SinglePage(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"Orders":[{"OrderID":"o1"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	since := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	resp, err := svc.GetHistoricalOrders(context.Background(), []string{"123"}, since)
+	if err != nil {
+		t.Fatalf("GetHistoricalOrders: %v", err)
+	}
+	if gotPath != "/v3/brokerage/accounts/123/historicalorders" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery != "since=2026-03-01" {
+		t.Errorf("query = %q", gotQuery)
+	}
+	if len(resp.Orders) != 1 {
+		t.Errorf("got %d orders, want 1", len(resp.Orders))
+	}
+}
+
+func TestGetHistoricalOrders_MultiPageAggregates(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			w.Write([]byte(`{"Orders":[{"OrderID":"o1"},{"OrderID":"o2"}],"NextToken":"tok1"}`))
+		case 2:
+			if got := r.URL.Query().Get("nextToken"); got != "tok1" {
+				t.Errorf("nextToken = %q, want tok1", got)
+			}
+			w.Write([]byte(`{"Orders":[{"OrderID":"o3"}],"NextToken":"tok2"}`))
+		case 3:
+			w.Write([]byte(`{"Orders":[{"OrderID":"o4"}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	since := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	resp, err := svc.GetHistoricalOrders(context.Background(), []string{"123"}, since)
+	if err != nil {
+		t.Fatalf("GetHistoricalOrders: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3", calls)
+	}
+	if len(resp.Orders) != 4 {
+		t.Errorf("orders = %d, want 4", len(resp.Orders))
+	}
+}
+
+func TestGetHistoricalOrders_WithMaxPages(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte(`{"Orders":[{"OrderID":"x"}],"NextToken":"keep-going"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	since := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	resp, err := svc.GetHistoricalOrders(context.Background(), []string{"123"}, since, WithMaxPages(2))
+	if err != nil {
+		t.Fatalf("GetHistoricalOrders: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2 (capped)", calls)
+	}
+	if len(resp.Orders) != 2 {
+		t.Errorf("orders = %d, want 2", len(resp.Orders))
+	}
+}
+
+func TestGetHistoricalOrders_WithPageSize(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"Orders":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	since := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	_, err := svc.GetHistoricalOrders(context.Background(), []string{"123"}, since, WithPageSize(100))
+	if err != nil {
+		t.Fatalf("GetHistoricalOrders: %v", err)
+	}
+	if gotQuery != "pageSize=100&since=2026-03-01" {
+		t.Errorf("query = %q", gotQuery)
+	}
+}
+
+func TestGetHistoricalOrders_ContextCancel(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte(`{"Orders":[{"OrderID":"x"}],"NextToken":"more"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	since := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	_, err := svc.GetHistoricalOrders(ctx, []string{"123"}, since)
+	if err == nil {
+		t.Error("want context-cancelled error")
 	}
 }
