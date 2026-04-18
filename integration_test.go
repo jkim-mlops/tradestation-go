@@ -171,3 +171,114 @@ func TestIntegration_BogusSymbol(t *testing.T) {
 	// We accept any error shape here - the actual TradeStation behavior may be
 	// 4xx, may be 200 with empty bars. Adjust once integration run reveals truth.
 }
+
+func TestIntegration_GetAccounts(t *testing.T) {
+	c := integrationClient(t)
+	svc := &BrokerageService{client: c}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	accounts, err := svc.GetAccounts(ctx)
+	if err != nil {
+		t.Fatalf("GetAccounts: %v", err)
+	}
+	if len(accounts) == 0 {
+		t.Fatal("no accounts returned — sandbox account required")
+	}
+	for _, a := range accounts {
+		if a.AccountID == "" {
+			t.Errorf("account missing ID: %+v", a)
+		}
+	}
+}
+
+func fetchSandboxAccountIDs(t *testing.T, c *Client) []string {
+	t.Helper()
+	svc := &BrokerageService{client: c}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	accounts, err := svc.GetAccounts(ctx)
+	if err != nil {
+		t.Fatalf("fetch accounts: %v", err)
+	}
+	ids := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		ids = append(ids, a.AccountID)
+	}
+	if len(ids) == 0 {
+		t.Skip("no accounts on sandbox — skipping dependent tests")
+	}
+	return ids
+}
+
+func TestIntegration_GetBalances(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+	svc := &BrokerageService{client: c}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := svc.GetBalances(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetBalances: %v", err)
+	}
+	if len(resp.Balances)+len(resp.Errors) != len(ids) {
+		t.Errorf("balances+errors = %d, want %d", len(resp.Balances)+len(resp.Errors), len(ids))
+	}
+}
+
+func TestIntegration_GetBalancesBOD(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+	svc := &BrokerageService{client: c}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if _, err := svc.GetBalancesBOD(ctx, ids); err != nil {
+		t.Fatalf("GetBalancesBOD: %v", err)
+	}
+}
+
+func TestIntegration_GetPositions(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+	svc := &BrokerageService{client: c}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if _, err := svc.GetPositions(ctx, ids); err != nil {
+		t.Fatalf("GetPositions: %v", err)
+	}
+}
+
+func TestIntegration_GetOrders(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+	svc := &BrokerageService{client: c}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if _, err := svc.GetOrders(ctx, ids); err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+}
+
+func TestIntegration_GetHistoricalOrders(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+	svc := &BrokerageService{client: c}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	since := time.Now().AddDate(0, 0, -30)
+	resp, err := svc.GetHistoricalOrders(ctx, ids, since, WithMaxPages(3))
+	if err != nil {
+		t.Fatalf("GetHistoricalOrders: %v", err)
+	}
+	_ = resp
+}
