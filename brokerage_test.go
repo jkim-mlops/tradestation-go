@@ -220,3 +220,27 @@ func TestGetPositions_WithSymbol(t *testing.T) {
 		t.Errorf("query = %q, want symbol=AAPL%%2A", gotQuery)
 	}
 }
+
+func TestGetOrders(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"Orders":[{"OrderID":"o1","AccountID":"123","Status":"Open"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	resp, err := svc.GetOrders(context.Background(), []string{"123"})
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	if gotPath != "/v3/brokerage/accounts/123/orders" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(resp.Orders) != 1 || resp.Orders[0].OrderID != "o1" {
+		t.Errorf("decoded wrong: %+v", resp.Orders)
+	}
+}

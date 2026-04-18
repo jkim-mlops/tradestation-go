@@ -105,3 +105,15 @@ func (s *BrokerageService) GetPositions(ctx context.Context, accountIDs []string
 	}
 	return &out, nil
 }
+
+func (s *BrokerageService) GetOrders(ctx context.Context, accountIDs []string) (*OrdersResponse, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	path := "/v3/brokerage/accounts/" + strings.Join(accountIDs, ",") + "/orders"
+	var out OrdersResponse
+	if err := s.client.doJSON(ctx, "GET", path, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
