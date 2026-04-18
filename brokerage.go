@@ -61,3 +61,15 @@ func (s *BrokerageService) GetBalances(ctx context.Context, accountIDs []string)
 	}
 	return &out, nil
 }
+
+func (s *BrokerageService) GetBalancesBOD(ctx context.Context, accountIDs []string) (*BalancesBODResponse, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	path := "/v3/brokerage/accounts/" + strings.Join(accountIDs, ",") + "/bodbalances"
+	var out BalancesBODResponse
+	if err := s.client.doJSON(ctx, "GET", path, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

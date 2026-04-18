@@ -147,3 +147,27 @@ func TestGetBalances_ValidationRejects(t *testing.T) {
 		t.Error("want error for empty accountIDs")
 	}
 }
+
+func TestGetBalancesBOD(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"BODBalances":[{"AccountID":"123","AccountType":"Cash"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	resp, err := svc.GetBalancesBOD(context.Background(), []string{"123"})
+	if err != nil {
+		t.Fatalf("GetBalancesBOD: %v", err)
+	}
+	if gotPath != "/v3/brokerage/accounts/123/bodbalances" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(resp.BODBalances) != 1 || resp.BODBalances[0].AccountID != "123" {
+		t.Errorf("decoded wrong: %+v", resp.BODBalances)
+	}
+}
