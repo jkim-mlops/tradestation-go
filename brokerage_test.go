@@ -171,3 +171,52 @@ func TestGetBalancesBOD(t *testing.T) {
 		t.Errorf("decoded wrong: %+v", resp.BODBalances)
 	}
 }
+
+func TestGetPositions_NoOpts(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"Positions":[{"AccountID":"123","Symbol":"AAPL","Quantity":"10"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	resp, err := svc.GetPositions(context.Background(), []string{"123"})
+	if err != nil {
+		t.Fatalf("GetPositions: %v", err)
+	}
+	if gotPath != "/v3/brokerage/accounts/123/positions" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery != "" {
+		t.Errorf("query = %q, want empty", gotQuery)
+	}
+	if len(resp.Positions) != 1 || resp.Positions[0].Symbol != "AAPL" {
+		t.Errorf("decoded wrong: %+v", resp.Positions)
+	}
+}
+
+func TestGetPositions_WithSymbol(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"Positions":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	_, err := svc.GetPositions(context.Background(), []string{"123"}, WithSymbol("AAPL*"))
+	if err != nil {
+		t.Fatalf("GetPositions: %v", err)
+	}
+	if gotQuery != "symbol=AAPL%2A" {
+		t.Errorf("query = %q, want symbol=AAPL%%2A", gotQuery)
+	}
+}
