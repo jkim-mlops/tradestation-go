@@ -16,6 +16,11 @@ type BrokerageService struct {
 	client *Client
 }
 
+// Brokerage returns a BrokerageService bound to this client.
+func (c *Client) Brokerage() *BrokerageService {
+	return &BrokerageService{client: c}
+}
+
 func validateAccountIDs(ids []string) error {
 	if len(ids) == 0 {
 		return errors.New("tradestation: at least one account ID required")

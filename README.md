@@ -84,8 +84,7 @@ func main() {
     )
 
     // Get bars for AAPL (last 5 daily).
-    md := /* MarketDataService wired to c — see note below */
-    bars, err := md.GetBars(context.Background(), "AAPL", tradestation.GetBarsParams{
+    bars, err := c.MarketData().GetBars(context.Background(), "AAPL", tradestation.GetBarsParams{
         Interval: 1,
         Unit:     tradestation.BarUnitDaily,
         BarsBack: 5,
@@ -97,7 +96,7 @@ func main() {
 }
 ```
 
-> **Current construction caveat:** `BrokerageService` and `MarketDataService` have an unexported `client` field and no public constructor or accessor on `Client`. They are usable as-is from **inside** `package tradestation` (which is why the tests work), but external callers need a thin helper. A follow-up will likely add `c.Brokerage()` / `c.MarketData()` accessors — until then, the easiest path for external use is a small wrapper in a sibling package that lives in the same module, or to vendor a constructor locally.
+Services hang off `Client`: `c.MarketData()` returns a `*MarketDataService`, `c.Brokerage()` returns a `*BrokerageService`. Accessors are cheap — call them per-use or stash the result, whichever reads better.
 
 ## Environments
 

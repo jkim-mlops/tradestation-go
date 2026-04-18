@@ -79,6 +79,16 @@ func make25IDs() []string {
 	return out
 }
 
+func TestClient_ServiceAccessors(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	if b := c.Brokerage(); b == nil || b.client != c {
+		t.Errorf("Brokerage(): got %+v, want service bound to client", b)
+	}
+	if m := c.MarketData(); m == nil || m.client != c {
+		t.Errorf("MarketData(): got %+v, want service bound to client", m)
+	}
+}
+
 func TestGetAccounts(t *testing.T) {
 	var gotPath, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
