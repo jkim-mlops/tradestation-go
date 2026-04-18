@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const maxAccountIDsPerRequest = 25
@@ -47,4 +48,16 @@ func (s *BrokerageService) GetAccounts(ctx context.Context) ([]Account, error) {
 		return nil, err
 	}
 	return resp.Accounts, nil
+}
+
+func (s *BrokerageService) GetBalances(ctx context.Context, accountIDs []string) (*BalancesResponse, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	path := "/v3/brokerage/accounts/" + strings.Join(accountIDs, ",") + "/balances"
+	var out BalancesResponse
+	if err := s.client.doJSON(ctx, "GET", path, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }

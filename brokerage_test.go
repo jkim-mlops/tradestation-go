@@ -109,3 +109,41 @@ func TestGetAccounts(t *testing.T) {
 		t.Errorf("decoded wrong: %+v", accounts)
 	}
 }
+
+func TestGetBalances(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{
+            "Balances":[{"AccountID":"123","CashBalance":"1000.50","BuyingPower":"2000"}],
+            "Errors":[{"AccountID":"456","Error":"NotFound","Message":"account not found"}]
+        }`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	resp, err := svc.GetBalances(context.Background(), []string{"123", "456"})
+	if err != nil {
+		t.Fatalf("GetBalances: %v", err)
+	}
+	if gotPath != "/v3/brokerage/accounts/123,456/balances" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(resp.Balances) != 1 || resp.Balances[0].CashBalance != 1000.50 {
+		t.Errorf("balances wrong: %+v", resp.Balances)
+	}
+	if len(resp.Errors) != 1 || resp.Errors[0].ErrorCode != "NotFound" {
+		t.Errorf("errors wrong: %+v", resp.Errors)
+	}
+}
+
+func TestGetBalances_ValidationRejects(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &BrokerageService{client: c}
+	if _, err := svc.GetBalances(context.Background(), nil); err == nil {
+		t.Error("want error for empty accountIDs")
+	}
+}
