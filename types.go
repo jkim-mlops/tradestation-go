@@ -316,3 +316,31 @@ type OrderRequest struct {
 	Duration    string  `json:"Duration"`
 	Route       string  `json:"Route,omitempty"`
 }
+
+// Brokerage response wrappers — carry both data and partial per-account errors.
+
+type AccountError struct {
+	AccountID string `json:"AccountID"`
+	ErrorCode string `json:"Error"`
+	Message   string `json:"Message"`
+}
+
+type BalancesResponse struct {
+	Balances []Balance      `json:"Balances"`
+	Errors   []AccountError `json:"Errors,omitempty"`
+}
+
+type BalancesBODResponse struct {
+	BODBalances []BODBalance   `json:"BODBalances"`
+	Errors      []AccountError `json:"Errors,omitempty"`
+}
+
+type PositionsResponse struct {
+	Positions []Position     `json:"Positions"`
+	Errors    []AccountError `json:"Errors,omitempty"`
+}
+
+type OrdersResponse struct {
+	Orders []Order        `json:"Orders"`
+	Errors []AccountError `json:"Errors,omitempty"`
+}
