@@ -244,3 +244,32 @@ func TestGetOrders(t *testing.T) {
 		t.Errorf("decoded wrong: %+v", resp.Orders)
 	}
 }
+
+func TestGetOrdersByID(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"Orders":[{"OrderID":"o1"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	_, err := svc.GetOrdersByID(context.Background(), []string{"123"}, []string{"o1", "o2"})
+	if err != nil {
+		t.Fatalf("GetOrdersByID: %v", err)
+	}
+	if gotPath != "/v3/brokerage/accounts/123/orders/o1,o2" {
+		t.Errorf("path = %q", gotPath)
+	}
+}
+
+func TestGetOrdersByID_ValidationRejectsEmptyOrderIDs(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &BrokerageService{client: c}
+	if _, err := svc.GetOrdersByID(context.Background(), []string{"123"}, nil); err == nil {
+		t.Error("want error for empty orderIDs")
+	}
+}
