@@ -12,6 +12,11 @@ type MarketDataService struct {
 	client *Client
 }
 
+// MarketData returns a MarketDataService bound to this client.
+func (c *Client) MarketData() *MarketDataService {
+	return &MarketDataService{client: c}
+}
+
 type BarUnit string
 
 const (
