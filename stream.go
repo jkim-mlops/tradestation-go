@@ -2,6 +2,7 @@ package tradestation
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -211,9 +212,8 @@ func (c *Client) pumpResponse(
 		}
 		switch kind {
 		case streamMessageData:
-			cp := append([]byte(nil), raw...)
 			select {
-			case out <- streamEvent{Raw: cp}:
+			case out <- streamEvent{Raw: bytes.Clone(raw)}:
 			case <-ctx.Done():
 				return nil, false
 			}
@@ -230,7 +230,7 @@ func (c *Client) pumpResponse(
 			return &StreamError{
 				Code:    env.Error,
 				Message: env.Message,
-				RawBody: append([]byte(nil), raw...),
+				RawBody: bytes.Clone(raw),
 			}, false
 		case streamMessageHeartbeat:
 			// keep-alive from server — no caller-visible event
