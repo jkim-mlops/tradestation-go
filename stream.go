@@ -182,7 +182,16 @@ func (c *Client) runStreamOnce(
 		// non-2xx is treated as transient so the reconnect loop can retry.
 		return nil, false
 	}
+	return c.pumpResponse(ctx, resp, out)
+}
 
+// pumpResponse drains resp.Body, classifying messages and forwarding them to
+// out. Caller owns resp.Body's lifecycle (open and close).
+func (c *Client) pumpResponse(
+	ctx context.Context,
+	resp *http.Response,
+	out chan<- streamEvent,
+) (terminal error, goAway bool) {
 	rdr := NewStreamReader(resp.Body)
 	for rdr.Scan() {
 		raw := rdr.Bytes()
@@ -219,6 +228,39 @@ func (c *Client) runStreamOnce(
 		}
 	}
 	return nil, false
+}
+
+// runStreamFromResp is a variant of runStream that pumps the given already-open
+// response for iteration zero, then delegates to runStream for reconnection.
+// Used by service-level stream calls so the synchronous connect doesn't
+// require a second HTTP round trip on the happy path.
+func (c *Client) runStreamFromResp(
+	ctx context.Context,
+	resp *http.Response,
+	openReq func(ctx context.Context) (*http.Request, error),
+	out chan<- streamEvent,
+	opts streamOpts,
+) {
+	terminal, _ := c.pumpResponse(ctx, resp, out)
+	resp.Body.Close()
+
+	if terminal != nil {
+		select {
+		case out <- streamEvent{Err: terminal}:
+		case <-ctx.Done():
+		}
+		close(out)
+		return
+	}
+	if !opts.reconnect || ctx.Err() != nil {
+		close(out)
+		return
+	}
+	if !sleepCtx(ctx, jitter(opts.backoffMin)) {
+		close(out)
+		return
+	}
+	c.runStream(ctx, openReq, out, opts)
 }
 
 // runStream is the top-level streaming driver: it repeatedly opens HTTP

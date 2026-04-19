@@ -419,6 +419,7 @@ func TestRunStream_ReconnectsAfterEOF(t *testing.T) {
 	opts.backoffMax = 5 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go c.runStream(ctx, openReq, out, opts)
 
 	got := make([]streamEvent, 0, 3)
@@ -565,5 +566,81 @@ func TestRunStream_ContextCancelClosesChannel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("runStream did not exit after cancel")
+	}
+}
+
+func TestRunStreamFromResp_UsesPreOpenedResponse(t *testing.T) {
+	var calls int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&calls, 1)
+		chunkedWrite(w, `{"Symbol":"AAPL"}`+"\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	req, _ := http.NewRequest("GET", srv.URL, nil)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	opts := defaultStreamOpts()
+	opts.reconnect = false
+
+	out := make(chan streamEvent, 4)
+	go c.runStreamFromResp(context.Background(), resp, openReq, out, opts)
+
+	got := drainEvents(out)
+	if len(got) != 1 {
+		t.Errorf("got %d events, want 1", len(got))
+	}
+	if atomic.LoadInt64(&calls) != 1 {
+		t.Errorf("calls = %d, want 1 (no re-open)", calls)
+	}
+}
+
+func TestRunStreamFromResp_ReconnectsOnEOF(t *testing.T) {
+	var calls int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&calls, 1)
+		chunkedWrite(w, `{"Symbol":"AAPL"}`+"\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	req, _ := http.NewRequest("GET", srv.URL, nil)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	opts := defaultStreamOpts()
+	opts.backoffMin = 1 * time.Millisecond
+	opts.backoffMax = 5 * time.Millisecond
+
+	out := make(chan streamEvent)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.runStreamFromResp(ctx, resp, openReq, out, opts)
+
+	var seen int
+	for range out {
+		seen++
+		if seen == 3 {
+			cancel()
+		}
+	}
+	if atomic.LoadInt64(&calls) < 3 {
+		t.Errorf("calls = %d, want >= 3 (re-opened after EOF)", calls)
 	}
 }
