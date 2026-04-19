@@ -2,9 +2,12 @@ package tradestation
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
+	"time"
 )
 
 const streamMaxMessageSize = 1 << 20 // 1 MiB
@@ -89,4 +92,58 @@ func (e *StreamError) Error() string {
 		return fmt.Sprintf("tradestation: stream error %s: %s", e.Code, e.Message)
 	}
 	return fmt.Sprintf("tradestation: stream error %s", e.Code)
+}
+
+type streamOpts struct {
+	reconnect  bool
+	backoffMin time.Duration
+	backoffMax time.Duration
+}
+
+// StreamOption configures streaming behavior on calls like StreamQuotes.
+type StreamOption func(*streamOpts)
+
+// WithoutReconnect disables automatic reconnection. The stream channel will
+// close on EOF, GoAway, or any error without retrying.
+func WithoutReconnect() StreamOption {
+	return func(o *streamOpts) { o.reconnect = false }
+}
+
+// WithReconnectBackoff sets the minimum and maximum reconnect delays used by
+// the exponential backoff with jitter. Min resets after a clean GoAway.
+func WithReconnectBackoff(min, max time.Duration) StreamOption {
+	return func(o *streamOpts) { o.backoffMin, o.backoffMax = min, max }
+}
+
+func defaultStreamOpts() streamOpts {
+	return streamOpts{
+		reconnect:  true,
+		backoffMin: 500 * time.Millisecond,
+		backoffMax: 30 * time.Second,
+	}
+}
+
+// sleepCtx blocks for d or until ctx is cancelled. Returns true on full sleep,
+// false on cancel.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// jitter returns d scaled by a random factor in [0.75, 1.25].
+func jitter(d time.Duration) time.Duration {
+	return time.Duration(float64(d) * (0.75 + rand.Float64()*0.5))
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }

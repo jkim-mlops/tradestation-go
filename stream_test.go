@@ -2,10 +2,12 @@ package tradestation
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStreamReader_SingleMessage(t *testing.T) {
@@ -163,5 +165,76 @@ func TestStreamError_Error(t *testing.T) {
 	bare := &StreamError{Code: "Unknown"}
 	if got := bare.Error(); got != "tradestation: stream error Unknown" {
 		t.Errorf("Error() without message = %q", got)
+	}
+}
+
+func TestDefaultStreamOpts(t *testing.T) {
+	o := defaultStreamOpts()
+	if !o.reconnect {
+		t.Error("reconnect should default to true")
+	}
+	if o.backoffMin != 500*time.Millisecond {
+		t.Errorf("backoffMin = %v, want 500ms", o.backoffMin)
+	}
+	if o.backoffMax != 30*time.Second {
+		t.Errorf("backoffMax = %v, want 30s", o.backoffMax)
+	}
+}
+
+func TestWithoutReconnect(t *testing.T) {
+	o := defaultStreamOpts()
+	WithoutReconnect()(&o)
+	if o.reconnect {
+		t.Error("reconnect should be false after WithoutReconnect")
+	}
+}
+
+func TestWithReconnectBackoff(t *testing.T) {
+	o := defaultStreamOpts()
+	WithReconnectBackoff(1*time.Second, 10*time.Second)(&o)
+	if o.backoffMin != 1*time.Second || o.backoffMax != 10*time.Second {
+		t.Errorf("backoff wrong: min=%v max=%v", o.backoffMin, o.backoffMax)
+	}
+}
+
+func TestSleepCtx_CompletesNormally(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	start := time.Now()
+	if !sleepCtx(ctx, 20*time.Millisecond) {
+		t.Error("want true on normal completion")
+	}
+	if elapsed := time.Since(start); elapsed < 15*time.Millisecond {
+		t.Errorf("returned too fast: %v", elapsed)
+	}
+}
+
+func TestSleepCtx_CancelReturnsFalse(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+	if sleepCtx(ctx, 1*time.Hour) {
+		t.Error("want false on cancel")
+	}
+}
+
+func TestJitter_StaysInRange(t *testing.T) {
+	base := 100 * time.Millisecond
+	for i := 0; i < 200; i++ {
+		j := jitter(base)
+		if j < time.Duration(float64(base)*0.75) || j > time.Duration(float64(base)*1.25) {
+			t.Fatalf("jitter %v out of ±25%% range of %v", j, base)
+		}
+	}
+}
+
+func TestMinDuration(t *testing.T) {
+	if minDuration(1*time.Second, 2*time.Second) != 1*time.Second {
+		t.Error("minDuration wrong for a<b")
+	}
+	if minDuration(2*time.Second, 1*time.Second) != 1*time.Second {
+		t.Error("minDuration wrong for a>b")
 	}
 }
