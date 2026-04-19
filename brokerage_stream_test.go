@@ -112,3 +112,48 @@ func TestStreamOrdersByID_ValidationRejectsEmptyOrderIDs(t *testing.T) {
 		t.Error("want error for empty orderIDs")
 	}
 }
+
+func TestStreamPositions_HappyPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		f := w.(http.Flusher)
+		w.Write([]byte(`{"AccountID":"123","Symbol":"AAPL","Quantity":"10"}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"StreamStatus":"EndSnapshot"}` + "\n"))
+		f.Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	events, err := svc.StreamPositions(context.Background(), []string{"123"}, WithoutReconnect())
+	if err != nil {
+		t.Fatalf("StreamPositions: %v", err)
+	}
+	var gotPosition bool
+	for ev := range events {
+		if ev.Err != nil {
+			t.Fatalf("err: %v", ev.Err)
+		}
+		if ev.Data != nil && ev.Data.Symbol == "AAPL" {
+			gotPosition = true
+		}
+	}
+	if gotPath != "/v3/brokerage/stream/accounts/123/positions" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !gotPosition {
+		t.Error("no position event received")
+	}
+}
+
+func TestStreamPositions_ValidationRejectsEmpty(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &BrokerageService{client: c}
+	if _, err := svc.StreamPositions(context.Background(), nil); err == nil {
+		t.Error("want error for empty accountIDs")
+	}
+}

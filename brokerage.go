@@ -235,6 +235,26 @@ func (s *BrokerageService) StreamOrdersByID(
 	return openStream[Order](ctx, s.client, openReq, cfg)
 }
 
+func (s *BrokerageService) StreamPositions(
+	ctx context.Context,
+	accountIDs []string,
+	opts ...StreamOption,
+) (<-chan PositionEvent, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	cfg := defaultStreamOpts()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	path := "/v3/brokerage/stream/accounts/" + strings.Join(accountIDs, ",") + "/positions"
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", s.client.apiBase+path, nil)
+	}
+	return openStream[Position](ctx, s.client, openReq, cfg)
+}
+
 func (s *BrokerageService) historicalOrdersLoop(
 	ctx context.Context,
 	basePath string,
