@@ -93,7 +93,6 @@ func (s *MarketDataService) StreamQuotes(
 	if len(symbols) > 50 {
 		return nil, errors.New("tradestation: StreamQuotes supports at most 50 symbols per request")
 	}
-
 	cfg := defaultStreamOpts()
 	for _, o := range opts {
 		o(&cfg)
@@ -103,27 +102,5 @@ func (s *MarketDataService) StreamQuotes(
 	openReq := func(ctx context.Context) (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, "GET", s.client.apiBase+path, nil)
 	}
-
-	// Synchronous first attempt so initial connect errors (4xx/5xx) return here
-	// rather than through the channel. authTransport handles 401 refresh-and-retry.
-	req, err := openReq(ctx)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.client.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		return nil, parseAPIError(resp)
-	}
-
-	raw := make(chan streamEvent)
-	events := make(chan QuoteEvent)
-
-	go s.client.runStreamFromResp(ctx, resp, openReq, raw, cfg)
-	go pumpEvents[Quote](raw, events)
-
-	return events, nil
+	return openStream[Quote](ctx, s.client, openReq, cfg)
 }

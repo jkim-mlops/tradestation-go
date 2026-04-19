@@ -180,6 +180,35 @@ type (
 	PositionEvent = StreamEvent[Position]
 )
 
+// openStream performs the synchronous first connect so connect-time 4xx/5xx
+// surface via the error return (not the channel), then wires the runner + pump
+// goroutines. Returns the typed event channel.
+func openStream[T any](
+	ctx context.Context,
+	client *Client,
+	openReq func(ctx context.Context) (*http.Request, error),
+	cfg streamOpts,
+) (<-chan StreamEvent[T], error) {
+	req, err := openReq(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		return nil, parseAPIError(resp)
+	}
+
+	raw := make(chan streamEvent)
+	events := make(chan StreamEvent[T])
+	go client.runStreamFromResp(ctx, resp, openReq, raw, cfg)
+	go pumpEvents[T](raw, events)
+	return events, nil
+}
+
 // pumpEvents reads raw stream events, decodes data payloads into T, and
 // forwards typed events to out. Closes out when in closes.
 func pumpEvents[T any](in <-chan streamEvent, out chan<- StreamEvent[T]) {

@@ -617,6 +617,58 @@ func TestRunStreamFromResp_UsesPreOpenedResponse(t *testing.T) {
 	}
 }
 
+func TestOpenStream_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunkedWrite(w, `{"Name":"hello","Value":1}`+"\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	cfg := defaultStreamOpts()
+	cfg.reconnect = false
+
+	events, err := openStream[fakePayload](context.Background(), c, openReq, cfg)
+	if err != nil {
+		t.Fatalf("openStream: %v", err)
+	}
+	ev, ok := <-events
+	if !ok {
+		t.Fatal("no events received")
+	}
+	if ev.Data == nil || ev.Data.Name != "hello" {
+		t.Errorf("decoded wrong: %+v", ev.Data)
+	}
+}
+
+func TestOpenStream_ConnectErrorReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"Error":"BadRequest","Message":"bad path"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+
+	_, err := openStream[fakePayload](context.Background(), c, openReq, defaultStreamOpts())
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusBadRequest {
+		t.Errorf("want *APIError 400, got %v", err)
+	}
+}
+
 type fakePayload struct {
 	Name  string `json:"Name"`
 	Value int    `json:"Value"`
