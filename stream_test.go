@@ -617,6 +617,126 @@ func TestRunStreamFromResp_UsesPreOpenedResponse(t *testing.T) {
 	}
 }
 
+func TestOpenStream_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunkedWrite(w, `{"Name":"hello","Value":1}`+"\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	cfg := defaultStreamOpts()
+	cfg.reconnect = false
+
+	events, err := openStream[fakePayload](context.Background(), c, openReq, cfg)
+	if err != nil {
+		t.Fatalf("openStream: %v", err)
+	}
+	ev, ok := <-events
+	if !ok {
+		t.Fatal("no events received")
+	}
+	if ev.Data == nil || ev.Data.Name != "hello" {
+		t.Errorf("decoded wrong: %+v", ev.Data)
+	}
+}
+
+func TestOpenStream_ConnectErrorReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"Error":"BadRequest","Message":"bad path"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+
+	_, err := openStream[fakePayload](context.Background(), c, openReq, defaultStreamOpts())
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusBadRequest {
+		t.Errorf("want *APIError 400, got %v", err)
+	}
+}
+
+type fakePayload struct {
+	Name  string `json:"Name"`
+	Value int    `json:"Value"`
+}
+
+func TestPumpEvents_DecodesData(t *testing.T) {
+	in := make(chan streamEvent, 1)
+	out := make(chan StreamEvent[fakePayload], 1)
+
+	in <- streamEvent{Raw: []byte(`{"Name":"foo","Value":42}`)}
+	close(in)
+
+	pumpEvents[fakePayload](in, out)
+
+	ev, ok := <-out
+	if !ok {
+		t.Fatal("no event received")
+	}
+	if ev.Err != nil || ev.Status != "" {
+		t.Fatalf("unexpected non-data event: %+v", ev)
+	}
+	if ev.Data == nil || ev.Data.Name != "foo" || ev.Data.Value != 42 {
+		t.Errorf("decoded wrong: %+v", ev.Data)
+	}
+	if _, more := <-out; more {
+		t.Error("channel should be closed")
+	}
+}
+
+func TestPumpEvents_ForwardsStatus(t *testing.T) {
+	in := make(chan streamEvent, 1)
+	out := make(chan StreamEvent[fakePayload], 1)
+	in <- streamEvent{Status: StreamStatusEndSnapshot}
+	close(in)
+	pumpEvents[fakePayload](in, out)
+	ev := <-out
+	if ev.Status != StreamStatusEndSnapshot {
+		t.Errorf("Status = %q", ev.Status)
+	}
+}
+
+func TestPumpEvents_ForwardsErr(t *testing.T) {
+	in := make(chan streamEvent, 1)
+	out := make(chan StreamEvent[fakePayload], 1)
+	in <- streamEvent{Err: errors.New("boom")}
+	close(in)
+	pumpEvents[fakePayload](in, out)
+	ev := <-out
+	if ev.Err == nil || ev.Err.Error() != "boom" {
+		t.Errorf("Err = %v", ev.Err)
+	}
+}
+
+func TestPumpEvents_DecodeFailureBecomesErrEvent(t *testing.T) {
+	in := make(chan streamEvent, 1)
+	out := make(chan StreamEvent[fakePayload], 1)
+	in <- streamEvent{Raw: []byte(`{not json`)}
+	close(in)
+	pumpEvents[fakePayload](in, out)
+	ev := <-out
+	if ev.Err == nil {
+		t.Fatal("want decode error")
+	}
+	if !strings.Contains(ev.Err.Error(), "decode") {
+		t.Errorf("Err should mention decode: %v", ev.Err)
+	}
+}
+
 func TestRunStreamFromResp_ReconnectsOnEOF(t *testing.T) {
 	var calls int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

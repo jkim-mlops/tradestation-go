@@ -2,7 +2,6 @@ package tradestation
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -80,17 +79,50 @@ func (s *MarketDataService) GetOptionsChain(symbol string) (*OptionsChain, error
 	panic("not implemented") // Phase 2D: streaming-only in the spec
 }
 
-func (s *MarketDataService) StreamBars(symbol string, interval string) (<-chan Bar, error) {
-	panic("not implemented")
+type StreamBarsParams struct {
+	Interval        int     // 1..1440; must be 1 for Daily/Weekly/Monthly
+	Unit            BarUnit // "Minute" | "Daily" | "Weekly" | "Monthly"
+	BarsBack        int     // optional; historical bars included before live updates
+	SessionTemplate string  // optional; e.g. "USEQPreAndPost"
 }
 
-// QuoteEvent is a single event on a quote stream. Exactly one of Quote, Status,
-// or Err is populated per event. The event channel closes after a terminal
-// event (Err populated, or clean termination).
-type QuoteEvent struct {
-	Quote  *Quote
-	Status StreamStatus
-	Err    error
+func (s *MarketDataService) StreamBars(
+	ctx context.Context,
+	symbol string,
+	params StreamBarsParams,
+	opts ...StreamOption,
+) (<-chan BarEvent, error) {
+	if symbol == "" {
+		return nil, errors.New("tradestation: StreamBars requires a symbol")
+	}
+	if params.Interval < 1 || params.Interval > 1440 {
+		return nil, errors.New("tradestation: StreamBars interval must be between 1 and 1440")
+	}
+	if params.Unit != BarUnitMinute && params.Interval != 1 {
+		return nil, fmt.Errorf("tradestation: StreamBars requires interval=1 for %s bars", params.Unit)
+	}
+
+	cfg := defaultStreamOpts()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	q := url.Values{}
+	q.Set("interval", strconv.Itoa(params.Interval))
+	q.Set("unit", string(params.Unit))
+	if params.BarsBack > 0 {
+		q.Set("barsback", strconv.Itoa(params.BarsBack))
+	}
+	if params.SessionTemplate != "" {
+		q.Set("sessiontemplate", params.SessionTemplate)
+	}
+
+	path := "/v3/marketdata/stream/barcharts/" + url.PathEscape(symbol)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		u := s.client.apiBase + path + "?" + q.Encode()
+		return http.NewRequestWithContext(ctx, "GET", u, nil)
+	}
+	return openStream[Bar](ctx, s.client, openReq, cfg)
 }
 
 func (s *MarketDataService) StreamQuotes(
@@ -104,7 +136,6 @@ func (s *MarketDataService) StreamQuotes(
 	if len(symbols) > 50 {
 		return nil, errors.New("tradestation: StreamQuotes supports at most 50 symbols per request")
 	}
-
 	cfg := defaultStreamOpts()
 	for _, o := range opts {
 		o(&cfg)
@@ -114,46 +145,5 @@ func (s *MarketDataService) StreamQuotes(
 	openReq := func(ctx context.Context) (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, "GET", s.client.apiBase+path, nil)
 	}
-
-	// Synchronous first attempt so initial connect errors (4xx/5xx) return here
-	// rather than through the channel. authTransport handles 401 refresh-and-retry.
-	req, err := openReq(ctx)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.client.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		return nil, parseAPIError(resp)
-	}
-
-	raw := make(chan streamEvent)
-	events := make(chan QuoteEvent)
-
-	go s.client.runStreamFromResp(ctx, resp, openReq, raw, cfg)
-	go pumpQuoteEvents(raw, events)
-
-	return events, nil
-}
-
-func pumpQuoteEvents(in <-chan streamEvent, out chan<- QuoteEvent) {
-	defer close(out)
-	for ev := range in {
-		switch {
-		case ev.Err != nil:
-			out <- QuoteEvent{Err: ev.Err}
-		case ev.Status != "":
-			out <- QuoteEvent{Status: ev.Status}
-		default:
-			var q Quote
-			if err := json.Unmarshal(ev.Raw, &q); err != nil {
-				out <- QuoteEvent{Err: fmt.Errorf("tradestation: decode quote: %w", err)}
-				continue
-			}
-			out <- QuoteEvent{Quote: &q}
-		}
-	}
+	return openStream[Quote](ctx, s.client, openReq, cfg)
 }

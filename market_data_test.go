@@ -139,9 +139,9 @@ func TestStreamQuotes_HappyPath(t *testing.T) {
 		switch {
 		case ev.Err != nil:
 			t.Fatalf("unexpected error: %v", ev.Err)
-		case ev.Quote != nil:
-			if ev.Quote.Symbol != "AAPL" || ev.Quote.Last != 150.5 {
-				t.Errorf("quote decoded wrong: %+v", *ev.Quote)
+		case ev.Data != nil:
+			if ev.Data.Symbol != "AAPL" || ev.Data.Last != 150.5 {
+				t.Errorf("quote decoded wrong: %+v", *ev.Data)
 			}
 			quoteSeen = true
 		case ev.Status != "":
@@ -235,8 +235,8 @@ func TestStreamQuotes_HeartbeatsFiltered(t *testing.T) {
 		if ev.Err != nil {
 			t.Fatalf("unexpected error: %v", ev.Err)
 		}
-		if ev.Quote != nil {
-			got = append(got, *ev.Quote)
+		if ev.Data != nil {
+			got = append(got, *ev.Data)
 		}
 	}
 	if len(got) != 2 {
@@ -244,6 +244,112 @@ func TestStreamQuotes_HeartbeatsFiltered(t *testing.T) {
 	}
 	if got[0].Symbol != "AAPL" || got[1].Symbol != "MSFT" {
 		t.Errorf("symbols = %q,%q", got[0].Symbol, got[1].Symbol)
+	}
+}
+
+func TestStreamBars_HappyPath(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		f := w.(http.Flusher)
+		w.Write([]byte(`{"Open":"100","High":"101","Low":"99","Close":"100.5","TotalVolume":"1000","TimeStamp":"2026-04-19T15:00:00Z"}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"StreamStatus":"EndSnapshot"}` + "\n"))
+		f.Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &MarketDataService{client: c}
+
+	events, err := svc.StreamBars(
+		context.Background(),
+		"AAPL",
+		StreamBarsParams{Interval: 1, Unit: BarUnitMinute, BarsBack: 5},
+		WithoutReconnect(),
+	)
+	if err != nil {
+		t.Fatalf("StreamBars: %v", err)
+	}
+
+	var gotBar bool
+	for ev := range events {
+		if ev.Err != nil {
+			t.Fatalf("err: %v", ev.Err)
+		}
+		if ev.Data != nil && ev.Data.Close == 100.5 {
+			gotBar = true
+		}
+	}
+	if gotPath != "/v3/marketdata/stream/barcharts/AAPL" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery != "barsback=5&interval=1&unit=Minute" {
+		t.Errorf("query = %q", gotQuery)
+	}
+	if !gotBar {
+		t.Error("no bar event received")
+	}
+}
+
+func TestStreamBars_SessionTemplate(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.(http.Flusher).Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &MarketDataService{client: c}
+
+	events, err := svc.StreamBars(
+		context.Background(),
+		"SPY",
+		StreamBarsParams{Interval: 5, Unit: BarUnitMinute, SessionTemplate: "USEQPreAndPost"},
+		WithoutReconnect(),
+	)
+	if err != nil {
+		t.Fatalf("StreamBars: %v", err)
+	}
+	for range events {
+	}
+	if gotQuery != "interval=5&sessiontemplate=USEQPreAndPost&unit=Minute" {
+		t.Errorf("query = %q", gotQuery)
+	}
+}
+
+func TestStreamBars_ValidationRejectsEmptySymbol(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &MarketDataService{client: c}
+	_, err := svc.StreamBars(context.Background(), "", StreamBarsParams{Interval: 1, Unit: BarUnitMinute})
+	if err == nil {
+		t.Error("want error for empty symbol")
+	}
+}
+
+func TestStreamBars_ValidationRejectsBadInterval(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &MarketDataService{client: c}
+	_, err := svc.StreamBars(context.Background(), "AAPL", StreamBarsParams{Interval: 0, Unit: BarUnitMinute})
+	if err == nil {
+		t.Error("want error for interval=0")
+	}
+	_, err = svc.StreamBars(context.Background(), "AAPL", StreamBarsParams{Interval: 1441, Unit: BarUnitMinute})
+	if err == nil {
+		t.Error("want error for interval=1441")
+	}
+}
+
+func TestStreamBars_ValidationRejectsNonMinuteIntervalGtOne(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &MarketDataService{client: c}
+	_, err := svc.StreamBars(context.Background(), "AAPL", StreamBarsParams{Interval: 2, Unit: BarUnitDaily})
+	if err == nil {
+		t.Error("want error for Daily with interval>1")
 	}
 }
 

@@ -302,6 +302,159 @@ func TestIntegration_GetHistoricalOrders(t *testing.T) {
 	dumpJSON(t, "historicalOrders", resp)
 }
 
+func TestIntegration_StreamOrders(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := c.Brokerage().StreamOrders(ctx, ids, WithoutReconnect())
+	if err != nil {
+		t.Fatalf("StreamOrders: %v", err)
+	}
+
+	var gotSnapshot bool
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("stream error: %v", ev.Err)
+		case ev.Data != nil:
+			t.Logf("order: %+v", *ev.Data)
+		case ev.Status == StreamStatusEndSnapshot:
+			t.Logf("status: EndSnapshot")
+			gotSnapshot = true
+			cancel()
+		default:
+			if ev.Status != "" {
+				t.Logf("status: %s", ev.Status)
+			}
+		}
+	}
+	if !gotSnapshot {
+		t.Error("no EndSnapshot received")
+	}
+}
+
+func TestIntegration_StreamPositions(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := c.Brokerage().StreamPositions(ctx, ids, WithoutReconnect())
+	if err != nil {
+		t.Fatalf("StreamPositions: %v", err)
+	}
+
+	var gotSnapshot bool
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("stream error: %v", ev.Err)
+		case ev.Data != nil:
+			t.Logf("position: %+v", *ev.Data)
+		case ev.Status == StreamStatusEndSnapshot:
+			t.Logf("status: EndSnapshot")
+			gotSnapshot = true
+			cancel()
+		}
+	}
+	if !gotSnapshot {
+		t.Error("no EndSnapshot received")
+	}
+}
+
+func TestIntegration_StreamBars(t *testing.T) {
+	c := integrationClient(t)
+
+	const wantBars = 5
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := c.MarketData().StreamBars(
+		ctx,
+		"SPY",
+		StreamBarsParams{Interval: 1, Unit: BarUnitMinute, BarsBack: wantBars},
+		WithoutReconnect(),
+	)
+	if err != nil {
+		t.Fatalf("StreamBars: %v", err)
+	}
+
+	// Bar streams don't emit EndSnapshot (unlike orders/positions/quotes).
+	// We exit after receiving the requested BarsBack historical bars.
+	var bars int
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("stream error: %v", ev.Err)
+		case ev.Data != nil:
+			t.Logf("bar: %+v", *ev.Data)
+			bars++
+		case ev.Status != "":
+			t.Logf("status: %s", ev.Status)
+		}
+		if bars >= wantBars {
+			cancel()
+			break
+		}
+	}
+	if bars < wantBars {
+		t.Errorf("received %d bars, want >= %d", bars, wantBars)
+	}
+}
+
+func TestIntegration_StreamOrdersByID(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	getCtx, getCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer getCancel()
+	resp, err := c.Brokerage().GetOrders(getCtx, ids)
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	if len(resp.Orders) == 0 {
+		t.Skip("no orders on sandbox — cannot test StreamOrdersByID")
+	}
+	orderID := resp.Orders[0].OrderID
+	accountID := resp.Orders[0].AccountID
+	t.Logf("streaming order %s on account %s", orderID, accountID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := c.Brokerage().StreamOrdersByID(
+		ctx,
+		[]string{accountID},
+		[]string{orderID},
+		WithoutReconnect(),
+	)
+	if err != nil {
+		t.Fatalf("StreamOrdersByID: %v", err)
+	}
+
+	var gotSnapshot bool
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("stream error: %v", ev.Err)
+		case ev.Data != nil:
+			t.Logf("order: %+v", *ev.Data)
+		case ev.Status == StreamStatusEndSnapshot:
+			t.Logf("status: EndSnapshot")
+			gotSnapshot = true
+			cancel()
+		}
+	}
+	if !gotSnapshot {
+		t.Error("no EndSnapshot received")
+	}
+}
+
 func TestIntegration_StreamQuotes(t *testing.T) {
 	c := integrationClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -318,9 +471,9 @@ func TestIntegration_StreamQuotes(t *testing.T) {
 		switch {
 		case ev.Err != nil:
 			t.Fatalf("stream error: %v", ev.Err)
-		case ev.Quote != nil:
-			t.Logf("quote: %+v", *ev.Quote)
-			got[ev.Quote.Symbol] = *ev.Quote
+		case ev.Data != nil:
+			t.Logf("quote: %+v", *ev.Data)
+			got[ev.Data.Symbol] = *ev.Data
 		case ev.Status != "":
 			t.Logf("status: %s", ev.Status)
 		}

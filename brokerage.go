@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -188,6 +189,70 @@ func (s *BrokerageService) GetHistoricalOrdersByID(
 	basePath := "/v3/brokerage/accounts/" + strings.Join(accountIDs, ",") +
 		"/historicalorders/" + strings.Join(orderIDs, ",")
 	return s.historicalOrdersLoop(ctx, basePath, since, opts)
+}
+
+func (s *BrokerageService) StreamOrders(
+	ctx context.Context,
+	accountIDs []string,
+	opts ...StreamOption,
+) (<-chan OrderEvent, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	cfg := defaultStreamOpts()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	path := "/v3/brokerage/stream/accounts/" + strings.Join(accountIDs, ",") + "/orders"
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", s.client.apiBase+path, nil)
+	}
+	return openStream[Order](ctx, s.client, openReq, cfg)
+}
+
+func (s *BrokerageService) StreamOrdersByID(
+	ctx context.Context,
+	accountIDs, orderIDs []string,
+	opts ...StreamOption,
+) (<-chan OrderEvent, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	if err := validateOrderIDs(orderIDs); err != nil {
+		return nil, err
+	}
+	cfg := defaultStreamOpts()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	path := "/v3/brokerage/stream/accounts/" + strings.Join(accountIDs, ",") +
+		"/orders/" + strings.Join(orderIDs, ",")
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", s.client.apiBase+path, nil)
+	}
+	return openStream[Order](ctx, s.client, openReq, cfg)
+}
+
+func (s *BrokerageService) StreamPositions(
+	ctx context.Context,
+	accountIDs []string,
+	opts ...StreamOption,
+) (<-chan PositionEvent, error) {
+	if err := validateAccountIDs(accountIDs); err != nil {
+		return nil, err
+	}
+	cfg := defaultStreamOpts()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	path := "/v3/brokerage/stream/accounts/" + strings.Join(accountIDs, ",") + "/positions"
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", s.client.apiBase+path, nil)
+	}
+	return openStream[Position](ctx, s.client, openReq, cfg)
 }
 
 func (s *BrokerageService) historicalOrdersLoop(

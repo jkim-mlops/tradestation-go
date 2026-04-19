@@ -165,6 +165,71 @@ type streamEvent struct {
 	Err    error
 }
 
+// StreamEvent is the generic event shape emitted by streaming services.
+// Exactly one of Data, Status, or Err is populated per event.
+type StreamEvent[T any] struct {
+	Data   *T
+	Status StreamStatus
+	Err    error
+}
+
+type (
+	QuoteEvent    = StreamEvent[Quote]
+	BarEvent      = StreamEvent[Bar]
+	OrderEvent    = StreamEvent[Order]
+	PositionEvent = StreamEvent[Position]
+)
+
+// openStream performs the synchronous first connect so connect-time 4xx/5xx
+// surface via the error return (not the channel), then wires the runner + pump
+// goroutines. Returns the typed event channel.
+func openStream[T any](
+	ctx context.Context,
+	client *Client,
+	openReq func(ctx context.Context) (*http.Request, error),
+	cfg streamOpts,
+) (<-chan StreamEvent[T], error) {
+	req, err := openReq(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		return nil, parseAPIError(resp)
+	}
+
+	raw := make(chan streamEvent)
+	events := make(chan StreamEvent[T])
+	go client.runStreamFromResp(ctx, resp, openReq, raw, cfg)
+	go pumpEvents[T](raw, events)
+	return events, nil
+}
+
+// pumpEvents reads raw stream events, decodes data payloads into T, and
+// forwards typed events to out. Closes out when in closes.
+func pumpEvents[T any](in <-chan streamEvent, out chan<- StreamEvent[T]) {
+	defer close(out)
+	for ev := range in {
+		switch {
+		case ev.Err != nil:
+			out <- StreamEvent[T]{Err: ev.Err}
+		case ev.Status != "":
+			out <- StreamEvent[T]{Status: ev.Status}
+		default:
+			var v T
+			if err := json.Unmarshal(ev.Raw, &v); err != nil {
+				out <- StreamEvent[T]{Err: fmt.Errorf("tradestation: decode %T: %w", v, err)}
+				continue
+			}
+			out <- StreamEvent[T]{Data: &v}
+		}
+	}
+}
+
 // runStreamOnce opens one connection and drains it. Return semantics:
 //
 //	terminal != nil  → do not reconnect (currently only *StreamError)
