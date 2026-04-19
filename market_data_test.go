@@ -139,9 +139,9 @@ func TestStreamQuotes_HappyPath(t *testing.T) {
 		switch {
 		case ev.Err != nil:
 			t.Fatalf("unexpected error: %v", ev.Err)
-		case ev.Quote != nil:
-			if ev.Quote.Symbol != "AAPL" || ev.Quote.Last != 150.5 {
-				t.Errorf("quote decoded wrong: %+v", *ev.Quote)
+		case ev.Data != nil:
+			if ev.Data.Symbol != "AAPL" || ev.Data.Last != 150.5 {
+				t.Errorf("quote decoded wrong: %+v", *ev.Data)
 			}
 			quoteSeen = true
 		case ev.Status != "":
@@ -235,8 +235,8 @@ func TestStreamQuotes_HeartbeatsFiltered(t *testing.T) {
 		if ev.Err != nil {
 			t.Fatalf("unexpected error: %v", ev.Err)
 		}
-		if ev.Quote != nil {
-			got = append(got, *ev.Quote)
+		if ev.Data != nil {
+			got = append(got, *ev.Data)
 		}
 	}
 	if len(got) != 2 {

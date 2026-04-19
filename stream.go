@@ -165,6 +165,42 @@ type streamEvent struct {
 	Err    error
 }
 
+// StreamEvent is the generic event shape emitted by streaming services.
+// Exactly one of Data, Status, or Err is populated per event.
+type StreamEvent[T any] struct {
+	Data   *T
+	Status StreamStatus
+	Err    error
+}
+
+type (
+	QuoteEvent    = StreamEvent[Quote]
+	BarEvent      = StreamEvent[Bar]
+	OrderEvent    = StreamEvent[Order]
+	PositionEvent = StreamEvent[Position]
+)
+
+// pumpEvents reads raw stream events, decodes data payloads into T, and
+// forwards typed events to out. Closes out when in closes.
+func pumpEvents[T any](in <-chan streamEvent, out chan<- StreamEvent[T]) {
+	defer close(out)
+	for ev := range in {
+		switch {
+		case ev.Err != nil:
+			out <- StreamEvent[T]{Err: ev.Err}
+		case ev.Status != "":
+			out <- StreamEvent[T]{Status: ev.Status}
+		default:
+			var v T
+			if err := json.Unmarshal(ev.Raw, &v); err != nil {
+				out <- StreamEvent[T]{Err: fmt.Errorf("tradestation: decode %T: %w", v, err)}
+				continue
+			}
+			out <- StreamEvent[T]{Data: &v}
+		}
+	}
+}
+
 // runStreamOnce opens one connection and drains it. Return semantics:
 //
 //	terminal != nil  → do not reconnect (currently only *StreamError)

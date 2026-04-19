@@ -318,9 +318,9 @@ func TestIntegration_StreamQuotes(t *testing.T) {
 		switch {
 		case ev.Err != nil:
 			t.Fatalf("stream error: %v", ev.Err)
-		case ev.Quote != nil:
-			t.Logf("quote: %+v", *ev.Quote)
-			got[ev.Quote.Symbol] = *ev.Quote
+		case ev.Data != nil:
+			t.Logf("quote: %+v", *ev.Data)
+			got[ev.Data.Symbol] = *ev.Data
 		case ev.Status != "":
 			t.Logf("status: %s", ev.Status)
 		}

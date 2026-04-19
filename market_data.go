@@ -2,9 +2,7 @@ package tradestation
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -84,15 +82,6 @@ func (s *MarketDataService) StreamBars(symbol string, interval string) (<-chan B
 	panic("not implemented")
 }
 
-// QuoteEvent is a single event on a quote stream. Exactly one of Quote, Status,
-// or Err is populated per event. The event channel closes after a terminal
-// event (Err populated, or clean termination).
-type QuoteEvent struct {
-	Quote  *Quote
-	Status StreamStatus
-	Err    error
-}
-
 func (s *MarketDataService) StreamQuotes(
 	ctx context.Context,
 	symbols []string,
@@ -134,26 +123,7 @@ func (s *MarketDataService) StreamQuotes(
 	events := make(chan QuoteEvent)
 
 	go s.client.runStreamFromResp(ctx, resp, openReq, raw, cfg)
-	go pumpQuoteEvents(raw, events)
+	go pumpEvents[Quote](raw, events)
 
 	return events, nil
-}
-
-func pumpQuoteEvents(in <-chan streamEvent, out chan<- QuoteEvent) {
-	defer close(out)
-	for ev := range in {
-		switch {
-		case ev.Err != nil:
-			out <- QuoteEvent{Err: ev.Err}
-		case ev.Status != "":
-			out <- QuoteEvent{Status: ev.Status}
-		default:
-			var q Quote
-			if err := json.Unmarshal(ev.Raw, &q); err != nil {
-				out <- QuoteEvent{Err: fmt.Errorf("tradestation: decode quote: %w", err)}
-				continue
-			}
-			out <- QuoteEvent{Quote: &q}
-		}
-	}
 }
