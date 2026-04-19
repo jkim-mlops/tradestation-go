@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -395,5 +396,174 @@ func TestRunStreamOnce_NonSuccessStatusIsTransient(t *testing.T) {
 	}
 	if ga {
 		t.Error("goAway should be false")
+	}
+}
+
+func TestRunStream_ReconnectsAfterEOF(t *testing.T) {
+	var calls int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt64(&calls, 1)
+		chunkedWrite(w, `{"call":`+string(rune('0'+n))+`}`+"\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	out := make(chan streamEvent)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	opts := defaultStreamOpts()
+	opts.backoffMin = 1 * time.Millisecond
+	opts.backoffMax = 5 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go c.runStream(ctx, openReq, out, opts)
+
+	got := make([]streamEvent, 0, 3)
+	for ev := range out {
+		got = append(got, ev)
+		if len(got) == 3 {
+			cancel()
+		}
+	}
+
+	if atomic.LoadInt64(&calls) < 3 {
+		t.Errorf("calls = %d, want >= 3 (reconnected)", calls)
+	}
+	if len(got) < 3 {
+		t.Errorf("got %d events, want >= 3", len(got))
+	}
+}
+
+func TestRunStream_GoAwayReconnects(t *testing.T) {
+	var calls int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&calls, 1)
+		chunkedWrite(w, `{"StreamStatus":"GoAway"}`+"\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	out := make(chan streamEvent)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	opts := defaultStreamOpts()
+	opts.backoffMin = 1 * time.Millisecond
+	opts.backoffMax = 5 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.runStream(ctx, openReq, out, opts)
+
+	var statuses int
+	for ev := range out {
+		if ev.Status == StreamStatusGoAway {
+			statuses++
+			if statuses == 3 {
+				cancel()
+			}
+		}
+	}
+	if statuses < 3 {
+		t.Errorf("statuses = %d, want >= 3", statuses)
+	}
+}
+
+func TestRunStream_ErrorIsTerminalAndClosesChannel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunkedWrite(w, `{"Error":"DualLogon","Message":"boom"}`+"\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	out := make(chan streamEvent)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	opts := defaultStreamOpts()
+	opts.backoffMin = 1 * time.Millisecond
+
+	go c.runStream(context.Background(), openReq, out, opts)
+
+	got := drainEvents(out)
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1 (terminal only)", len(got))
+	}
+	var se *StreamError
+	if !errors.As(got[0].Err, &se) {
+		t.Fatalf("not a *StreamError: %v", got[0].Err)
+	}
+	if se.Code != "DualLogon" {
+		t.Errorf("Code = %q", se.Code)
+	}
+}
+
+func TestRunStream_WithoutReconnectStopsOnEOF(t *testing.T) {
+	var calls int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&calls, 1)
+		chunkedWrite(w, `{"Symbol":"AAPL"}`+"\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	out := make(chan streamEvent)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	opts := defaultStreamOpts()
+	opts.reconnect = false
+
+	go c.runStream(context.Background(), openReq, out, opts)
+
+	got := drainEvents(out)
+	if len(got) != 1 {
+		t.Errorf("got %d events, want 1", len(got))
+	}
+	if atomic.LoadInt64(&calls) != 1 {
+		t.Errorf("calls = %d, want 1 (no reconnect)", calls)
+	}
+}
+
+func TestRunStream_ContextCancelClosesChannel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	out := make(chan streamEvent)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	opts := defaultStreamOpts()
+	opts.backoffMin = 1 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		c.runStream(ctx, openReq, out, opts)
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runStream did not exit after cancel")
 	}
 }

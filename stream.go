@@ -220,3 +220,48 @@ func (c *Client) runStreamOnce(
 	}
 	return nil, false
 }
+
+// runStream is the top-level streaming driver: it repeatedly opens HTTP
+// connections (via openReq), pumps classified events into out, and honors
+// reconnect/backoff config. It closes out when it exits — either on a
+// terminal error (surfaced as the last streamEvent) or on ctx cancellation.
+func (c *Client) runStream(
+	ctx context.Context,
+	openReq func(ctx context.Context) (*http.Request, error),
+	out chan<- streamEvent,
+	opts streamOpts,
+) {
+	defer close(out)
+
+	backoff := opts.backoffMin
+	for {
+		terminal, goAway := c.runStreamOnce(ctx, openReq, out)
+
+		if terminal != nil {
+			select {
+			case out <- streamEvent{Err: terminal}:
+			case <-ctx.Done():
+			}
+			return
+		}
+		if !opts.reconnect {
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+
+		delay := backoff
+		if goAway {
+			delay = opts.backoffMin
+		}
+		if !sleepCtx(ctx, jitter(delay)) {
+			return
+		}
+		if goAway {
+			backoff = opts.backoffMin
+		} else {
+			backoff = minDuration(backoff*2, opts.backoffMax)
+		}
+	}
+}
