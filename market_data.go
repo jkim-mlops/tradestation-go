@@ -3,6 +3,7 @@ package tradestation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -78,8 +79,50 @@ func (s *MarketDataService) GetOptionsChain(symbol string) (*OptionsChain, error
 	panic("not implemented") // Phase 2D: streaming-only in the spec
 }
 
-func (s *MarketDataService) StreamBars(symbol string, interval string) (<-chan Bar, error) {
-	panic("not implemented")
+type StreamBarsParams struct {
+	Interval        int     // 1..1440; must be 1 for Daily/Weekly/Monthly
+	Unit            BarUnit // "Minute" | "Daily" | "Weekly" | "Monthly"
+	BarsBack        int     // optional; historical bars included before live updates
+	SessionTemplate string  // optional; e.g. "USEQPreAndPost"
+}
+
+func (s *MarketDataService) StreamBars(
+	ctx context.Context,
+	symbol string,
+	params StreamBarsParams,
+	opts ...StreamOption,
+) (<-chan BarEvent, error) {
+	if symbol == "" {
+		return nil, errors.New("tradestation: StreamBars requires a symbol")
+	}
+	if params.Interval < 1 || params.Interval > 1440 {
+		return nil, errors.New("tradestation: StreamBars interval must be between 1 and 1440")
+	}
+	if params.Unit != BarUnitMinute && params.Interval != 1 {
+		return nil, fmt.Errorf("tradestation: StreamBars requires interval=1 for %s bars", params.Unit)
+	}
+
+	cfg := defaultStreamOpts()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	q := url.Values{}
+	q.Set("interval", strconv.Itoa(params.Interval))
+	q.Set("unit", string(params.Unit))
+	if params.BarsBack > 0 {
+		q.Set("barsback", strconv.Itoa(params.BarsBack))
+	}
+	if params.SessionTemplate != "" {
+		q.Set("sessiontemplate", params.SessionTemplate)
+	}
+
+	path := "/v3/marketdata/stream/barcharts/" + url.PathEscape(symbol)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		u := s.client.apiBase + path + "?" + q.Encode()
+		return http.NewRequestWithContext(ctx, "GET", u, nil)
+	}
+	return openStream[Bar](ctx, s.client, openReq, cfg)
 }
 
 func (s *MarketDataService) StreamQuotes(
