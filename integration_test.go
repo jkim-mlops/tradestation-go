@@ -336,6 +336,36 @@ func TestIntegration_StreamOrders(t *testing.T) {
 	}
 }
 
+func TestIntegration_StreamPositions(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := c.Brokerage().StreamPositions(ctx, ids, WithoutReconnect())
+	if err != nil {
+		t.Fatalf("StreamPositions: %v", err)
+	}
+
+	var gotSnapshot bool
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("stream error: %v", ev.Err)
+		case ev.Data != nil:
+			t.Logf("position: %+v", *ev.Data)
+		case ev.Status == StreamStatusEndSnapshot:
+			t.Logf("status: EndSnapshot")
+			gotSnapshot = true
+			cancel()
+		}
+	}
+	if !gotSnapshot {
+		t.Error("no EndSnapshot received")
+	}
+}
+
 func TestIntegration_StreamQuotes(t *testing.T) {
 	c := integrationClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
