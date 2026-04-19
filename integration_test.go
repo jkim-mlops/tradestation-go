@@ -407,6 +407,54 @@ func TestIntegration_StreamBars(t *testing.T) {
 	}
 }
 
+func TestIntegration_StreamOrdersByID(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	getCtx, getCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer getCancel()
+	resp, err := c.Brokerage().GetOrders(getCtx, ids)
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	if len(resp.Orders) == 0 {
+		t.Skip("no orders on sandbox — cannot test StreamOrdersByID")
+	}
+	orderID := resp.Orders[0].OrderID
+	accountID := resp.Orders[0].AccountID
+	t.Logf("streaming order %s on account %s", orderID, accountID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := c.Brokerage().StreamOrdersByID(
+		ctx,
+		[]string{accountID},
+		[]string{orderID},
+		WithoutReconnect(),
+	)
+	if err != nil {
+		t.Fatalf("StreamOrdersByID: %v", err)
+	}
+
+	var gotSnapshot bool
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("stream error: %v", ev.Err)
+		case ev.Data != nil:
+			t.Logf("order: %+v", *ev.Data)
+		case ev.Status == StreamStatusEndSnapshot:
+			t.Logf("status: EndSnapshot")
+			gotSnapshot = true
+			cancel()
+		}
+	}
+	if !gotSnapshot {
+		t.Error("no EndSnapshot received")
+	}
+}
+
 func TestIntegration_StreamQuotes(t *testing.T) {
 	c := integrationClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
