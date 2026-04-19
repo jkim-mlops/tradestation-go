@@ -301,3 +301,43 @@ func TestIntegration_GetHistoricalOrders(t *testing.T) {
 	}
 	dumpJSON(t, "historicalOrders", resp)
 }
+
+func TestIntegration_StreamQuotes(t *testing.T) {
+	c := integrationClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	wantSyms := []string{"AAPL", "SPY"}
+	events, err := c.MarketData().StreamQuotes(ctx, wantSyms, WithoutReconnect())
+	if err != nil {
+		t.Fatalf("StreamQuotes: %v", err)
+	}
+
+	got := make(map[string]Quote)
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("stream error: %v", ev.Err)
+		case ev.Quote != nil:
+			t.Logf("quote: %+v", *ev.Quote)
+			got[ev.Quote.Symbol] = *ev.Quote
+		case ev.Status != "":
+			t.Logf("status: %s", ev.Status)
+		}
+		if len(got) == len(wantSyms) {
+			cancel()
+			break
+		}
+	}
+
+	for _, sym := range wantSyms {
+		q, ok := got[sym]
+		if !ok {
+			t.Errorf("no quote received for %s", sym)
+			continue
+		}
+		if q.Ask <= 0 || q.Bid <= 0 {
+			t.Errorf("%s quote missing prices: %+v", sym, q)
+		}
+	}
+}

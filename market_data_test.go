@@ -2,9 +2,11 @@ package tradestation
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGetBars_RequestShape(t *testing.T) {
@@ -106,5 +108,162 @@ func TestGetQuote_TooManyRejected(t *testing.T) {
 	_, err := svc.GetQuote(context.Background(), syms)
 	if err == nil {
 		t.Error("want error for >50 symbols")
+	}
+}
+
+func TestStreamQuotes_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.tradestation.streams.v2+json")
+		f := w.(http.Flusher)
+		w.Write([]byte(`{"Symbol":"AAPL","Last":150.5}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"StreamStatus":"EndSnapshot"}` + "\n"))
+		f.Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &MarketDataService{client: c}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	events, err := svc.StreamQuotes(ctx, []string{"AAPL"}, WithoutReconnect())
+	if err != nil {
+		t.Fatalf("StreamQuotes: %v", err)
+	}
+
+	var quoteSeen, snapshotSeen bool
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("unexpected error: %v", ev.Err)
+		case ev.Quote != nil:
+			if ev.Quote.Symbol != "AAPL" || ev.Quote.Last != 150.5 {
+				t.Errorf("quote decoded wrong: %+v", *ev.Quote)
+			}
+			quoteSeen = true
+		case ev.Status != "":
+			if ev.Status == StreamStatusEndSnapshot {
+				snapshotSeen = true
+			}
+		}
+	}
+	if !quoteSeen || !snapshotSeen {
+		t.Errorf("quoteSeen=%v snapshotSeen=%v", quoteSeen, snapshotSeen)
+	}
+}
+
+func TestStreamQuotes_ErrorMessageTerminates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f := w.(http.Flusher)
+		w.Write([]byte(`{"Error":"DualLogon","Message":"another client"}` + "\n"))
+		f.Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &MarketDataService{client: c}
+
+	events, err := svc.StreamQuotes(context.Background(), []string{"AAPL"})
+	if err != nil {
+		t.Fatalf("StreamQuotes: %v", err)
+	}
+
+	var gotErr error
+	for ev := range events {
+		if ev.Err != nil {
+			gotErr = ev.Err
+		}
+	}
+	var se *StreamError
+	if !errors.As(gotErr, &se) {
+		t.Fatalf("want *StreamError, got %v", gotErr)
+	}
+	if se.Code != "DualLogon" {
+		t.Errorf("Code = %q", se.Code)
+	}
+}
+
+func TestStreamQuotes_EmptySymbolsRejected(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &MarketDataService{client: c}
+	if _, err := svc.StreamQuotes(context.Background(), nil); err == nil {
+		t.Error("want error for empty symbols")
+	}
+}
+
+func TestStreamQuotes_TooManySymbolsRejected(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &MarketDataService{client: c}
+	syms := make([]string, 51)
+	for i := range syms {
+		syms[i] = "X"
+	}
+	if _, err := svc.StreamQuotes(context.Background(), syms); err == nil {
+		t.Error("want error for >50 symbols")
+	}
+}
+
+func TestStreamQuotes_HeartbeatsFiltered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f := w.(http.Flusher)
+		w.Write([]byte(`{"Symbol":"AAPL","Last":150.5}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"Heartbeat":1,"Timestamp":"2026-04-19T16:52:56Z"}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"Heartbeat":2,"Timestamp":"2026-04-19T16:53:01Z"}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"Symbol":"MSFT","Last":300.1}` + "\n"))
+		f.Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &MarketDataService{client: c}
+
+	events, err := svc.StreamQuotes(context.Background(), []string{"AAPL", "MSFT"}, WithoutReconnect())
+	if err != nil {
+		t.Fatalf("StreamQuotes: %v", err)
+	}
+
+	var got []Quote
+	for ev := range events {
+		if ev.Err != nil {
+			t.Fatalf("unexpected error: %v", ev.Err)
+		}
+		if ev.Quote != nil {
+			got = append(got, *ev.Quote)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d quotes, want 2 (heartbeats should be filtered): %+v", len(got), got)
+	}
+	if got[0].Symbol != "AAPL" || got[1].Symbol != "MSFT" {
+		t.Errorf("symbols = %q,%q", got[0].Symbol, got[1].Symbol)
+	}
+}
+
+func TestStreamQuotes_ConnectErrorReturnsImmediately(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"Error":"BadRequest","Message":"bad"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &MarketDataService{client: c}
+
+	_, err := svc.StreamQuotes(context.Background(), []string{"AAPL"})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusBadRequest {
+		t.Errorf("want *APIError 400, got %v", err)
 	}
 }
