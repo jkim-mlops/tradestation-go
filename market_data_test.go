@@ -207,6 +207,46 @@ func TestStreamQuotes_TooManySymbolsRejected(t *testing.T) {
 	}
 }
 
+func TestStreamQuotes_HeartbeatsFiltered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f := w.(http.Flusher)
+		w.Write([]byte(`{"Symbol":"AAPL","Last":150.5}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"Heartbeat":1,"Timestamp":"2026-04-19T16:52:56Z"}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"Heartbeat":2,"Timestamp":"2026-04-19T16:53:01Z"}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"Symbol":"MSFT","Last":300.1}` + "\n"))
+		f.Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &MarketDataService{client: c}
+
+	events, err := svc.StreamQuotes(context.Background(), []string{"AAPL", "MSFT"}, WithoutReconnect())
+	if err != nil {
+		t.Fatalf("StreamQuotes: %v", err)
+	}
+
+	var got []Quote
+	for ev := range events {
+		if ev.Err != nil {
+			t.Fatalf("unexpected error: %v", ev.Err)
+		}
+		if ev.Quote != nil {
+			got = append(got, *ev.Quote)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d quotes, want 2 (heartbeats should be filtered): %+v", len(got), got)
+	}
+	if got[0].Symbol != "AAPL" || got[1].Symbol != "MSFT" {
+		t.Errorf("symbols = %q,%q", got[0].Symbol, got[1].Symbol)
+	}
+}
+
 func TestStreamQuotes_ConnectErrorReturnsImmediately(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

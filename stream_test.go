@@ -144,6 +144,19 @@ func TestClassify_Error(t *testing.T) {
 	}
 }
 
+func TestClassify_Heartbeat(t *testing.T) {
+	kind, env, err := classifyStreamMessage([]byte(`{"Heartbeat":7,"Timestamp":"2026-04-19T16:52:56Z"}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if kind != streamMessageHeartbeat {
+		t.Errorf("kind = %v, want heartbeat", kind)
+	}
+	if env.Heartbeat == nil || *env.Heartbeat != 7 {
+		t.Errorf("Heartbeat = %v, want 7", env.Heartbeat)
+	}
+}
+
 func TestClassify_UnknownStatusPassesThrough(t *testing.T) {
 	kind, env, _ := classifyStreamMessage([]byte(`{"StreamStatus":"WhoKnows"}`))
 	if kind != streamMessageStatus || env.StreamStatus != "WhoKnows" {

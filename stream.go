@@ -53,6 +53,7 @@ const (
 	streamMessageData streamMessageKind = iota
 	streamMessageStatus
 	streamMessageError
+	streamMessageHeartbeat
 )
 
 // streamEnvelope captures TradeStation's control fields. Payload-specific fields
@@ -61,6 +62,10 @@ type streamEnvelope struct {
 	StreamStatus StreamStatus `json:"StreamStatus,omitempty"`
 	Error        string       `json:"Error,omitempty"`
 	Message      string       `json:"Message,omitempty"`
+	// Heartbeat is a pointer so we can distinguish "not a heartbeat" (nil) from
+	// a Heartbeat of 0. TradeStation sends {"Heartbeat":N,"Timestamp":"..."}
+	// periodically on all streaming endpoints; callers never need to see them.
+	Heartbeat *int64 `json:"Heartbeat,omitempty"`
 }
 
 // classifyStreamMessage peeks at a raw message, returning its kind and envelope.
@@ -71,6 +76,8 @@ func classifyStreamMessage(raw []byte) (streamMessageKind, streamEnvelope, error
 		return streamMessageData, env, err
 	}
 	switch {
+	case env.Heartbeat != nil:
+		return streamMessageHeartbeat, env, nil
 	case env.StreamStatus != "":
 		return streamMessageStatus, env, nil
 	case env.Error != "":
@@ -225,6 +232,8 @@ func (c *Client) pumpResponse(
 				Message: env.Message,
 				RawBody: append([]byte(nil), raw...),
 			}, false
+		case streamMessageHeartbeat:
+			// keep-alive from server — no caller-visible event
 		}
 	}
 	return nil, false
