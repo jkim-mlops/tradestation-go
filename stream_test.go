@@ -92,3 +92,76 @@ func TestStreamReader_MaxSizeExceeded(t *testing.T) {
 		t.Errorf("Err = %v, want bufio.ErrTooLong", err)
 	}
 }
+
+func TestClassify_Data(t *testing.T) {
+	kind, env, err := classifyStreamMessage([]byte(`{"Symbol":"AAPL","Last":150}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if kind != streamMessageData {
+		t.Errorf("kind = %v, want data", kind)
+	}
+	if env.StreamStatus != "" || env.Error != "" {
+		t.Errorf("env populated for data: %+v", env)
+	}
+}
+
+func TestClassify_EndSnapshot(t *testing.T) {
+	kind, env, err := classifyStreamMessage([]byte(`{"StreamStatus":"EndSnapshot"}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if kind != streamMessageStatus {
+		t.Errorf("kind = %v, want status", kind)
+	}
+	if env.StreamStatus != StreamStatusEndSnapshot {
+		t.Errorf("StreamStatus = %q", env.StreamStatus)
+	}
+}
+
+func TestClassify_GoAway(t *testing.T) {
+	kind, env, _ := classifyStreamMessage([]byte(`{"StreamStatus":"GoAway"}`))
+	if kind != streamMessageStatus || env.StreamStatus != StreamStatusGoAway {
+		t.Errorf("kind=%v status=%q", kind, env.StreamStatus)
+	}
+}
+
+func TestClassify_Error(t *testing.T) {
+	kind, env, err := classifyStreamMessage([]byte(`{"Symbol":"AAPL","Error":"DualLogon","Message":"another client connected"}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if kind != streamMessageError {
+		t.Errorf("kind = %v, want error", kind)
+	}
+	if env.Error != "DualLogon" || env.Message == "" {
+		t.Errorf("env wrong: %+v", env)
+	}
+}
+
+func TestClassify_UnknownStatusPassesThrough(t *testing.T) {
+	kind, env, _ := classifyStreamMessage([]byte(`{"StreamStatus":"WhoKnows"}`))
+	if kind != streamMessageStatus || env.StreamStatus != "WhoKnows" {
+		t.Errorf("kind=%v status=%q", kind, env.StreamStatus)
+	}
+}
+
+func TestClassify_MalformedJSON(t *testing.T) {
+	_, _, err := classifyStreamMessage([]byte(`{not json`))
+	if err == nil {
+		t.Error("want error for malformed JSON")
+	}
+}
+
+func TestStreamError_Error(t *testing.T) {
+	e := &StreamError{Code: "DualLogon", Message: "another client connected"}
+	want := "tradestation: stream error DualLogon: another client connected"
+	if got := e.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+
+	bare := &StreamError{Code: "Unknown"}
+	if got := bare.Error(); got != "tradestation: stream error Unknown" {
+		t.Errorf("Error() without message = %q", got)
+	}
+}
