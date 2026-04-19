@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -236,5 +238,162 @@ func TestMinDuration(t *testing.T) {
 	}
 	if minDuration(2*time.Second, 1*time.Second) != 1*time.Second {
 		t.Error("minDuration wrong for a>b")
+	}
+}
+
+// drainEvents reads everything from ch into a slice until it closes.
+func drainEvents(ch <-chan streamEvent) []streamEvent {
+	var out []streamEvent
+	for ev := range ch {
+		out = append(out, ev)
+	}
+	return out
+}
+
+// chunkedWrite writes and flushes each string as a separate HTTP chunk so
+// tests can simulate messages split across TCP boundaries.
+func chunkedWrite(w http.ResponseWriter, chunks ...string) {
+	f, ok := w.(http.Flusher)
+	if !ok {
+		panic("ResponseWriter does not support flushing")
+	}
+	for _, c := range chunks {
+		w.Write([]byte(c))
+		f.Flush()
+	}
+}
+
+func TestRunStreamOnce_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunkedWrite(w,
+			`{"Symbol":"AAPL","Last":1}`+"\n",
+			`{"Symbol":"MSFT","Last":2}`+"\n",
+		)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	ch := make(chan streamEvent, 8)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	go func() {
+		defer close(ch)
+		_, _ = c.runStreamOnce(context.Background(), openReq, ch)
+	}()
+
+	got := drainEvents(ch)
+	if len(got) != 2 {
+		t.Fatalf("got %d events, want 2", len(got))
+	}
+	for i, ev := range got {
+		if ev.Err != nil || ev.Status != "" {
+			t.Errorf("ev[%d] not data: %+v", i, ev)
+		}
+	}
+}
+
+func TestRunStreamOnce_GoAwayReturnsTrue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunkedWrite(w,
+			`{"Symbol":"AAPL"}`+"\n",
+			`{"StreamStatus":"GoAway"}`+"\n",
+			`{"Symbol":"SHOULD-NOT-APPEAR"}`+"\n",
+		)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	ch := make(chan streamEvent, 8)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+
+	terminalCh := make(chan error, 1)
+	goAwayCh := make(chan bool, 1)
+	go func() {
+		defer close(ch)
+		term, ga := c.runStreamOnce(context.Background(), openReq, ch)
+		terminalCh <- term
+		goAwayCh <- ga
+	}()
+
+	got := drainEvents(ch)
+	if term := <-terminalCh; term != nil {
+		t.Errorf("terminal = %v, want nil", term)
+	}
+	if !<-goAwayCh {
+		t.Error("goAway should be true")
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d events, want 2 (data + GoAway)", len(got))
+	}
+	if got[1].Status != StreamStatusGoAway {
+		t.Errorf("last event Status = %q", got[1].Status)
+	}
+}
+
+func TestRunStreamOnce_ErrorIsTerminal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunkedWrite(w,
+			`{"Symbol":"AAPL"}`+"\n",
+			`{"Error":"DualLogon","Message":"another client"}`+"\n",
+		)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	ch := make(chan streamEvent, 8)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+	terminalCh := make(chan error, 1)
+	go func() {
+		defer close(ch)
+		term, _ := c.runStreamOnce(context.Background(), openReq, ch)
+		terminalCh <- term
+	}()
+
+	got := drainEvents(ch)
+	term := <-terminalCh
+	var se *StreamError
+	if !errors.As(term, &se) {
+		t.Fatalf("terminal not *StreamError: %v", term)
+	}
+	if se.Code != "DualLogon" {
+		t.Errorf("Code = %q", se.Code)
+	}
+	if len(got) != 1 {
+		t.Errorf("got %d events, want 1 (only the pre-error data)", len(got))
+	}
+}
+
+func TestRunStreamOnce_NonSuccessStatusIsTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	ch := make(chan streamEvent, 2)
+	openReq := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	}
+
+	term, ga := c.runStreamOnce(context.Background(), openReq, ch)
+	close(ch)
+	if term != nil {
+		t.Errorf("terminal = %v, want nil (transient)", term)
+	}
+	if ga {
+		t.Error("goAway should be false")
 	}
 }

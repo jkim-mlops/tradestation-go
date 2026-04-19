@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
 	"time"
 )
 
@@ -146,4 +147,76 @@ func minDuration(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+// streamEvent is the type-agnostic event the runner emits. Exactly one of
+// Raw, Status, or Err is populated per event.
+type streamEvent struct {
+	Raw    []byte
+	Status StreamStatus
+	Err    error
+}
+
+// runStreamOnce opens one connection and drains it. Return semantics:
+//
+//	terminal != nil  → do not reconnect (currently only *StreamError)
+//	goAway == true   → clean server-initiated reconnect (reset backoff)
+//	both zero        → transient (EOF or network) — caller reconnects with escalating backoff
+func (c *Client) runStreamOnce(
+	ctx context.Context,
+	openReq func(ctx context.Context) (*http.Request, error),
+	out chan<- streamEvent,
+) (terminal error, goAway bool) {
+	req, err := openReq(ctx)
+	if err != nil {
+		return nil, false
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// authTransport already refreshed on 401 before we got here. Any remaining
+		// non-2xx is treated as transient so the reconnect loop can retry.
+		return nil, false
+	}
+
+	rdr := NewStreamReader(resp.Body)
+	for rdr.Scan() {
+		raw := rdr.Bytes()
+		if len(raw) == 0 {
+			continue
+		}
+		kind, env, err := classifyStreamMessage(raw)
+		if err != nil {
+			continue
+		}
+		switch kind {
+		case streamMessageData:
+			cp := append([]byte(nil), raw...)
+			select {
+			case out <- streamEvent{Raw: cp}:
+			case <-ctx.Done():
+				return nil, false
+			}
+		case streamMessageStatus:
+			select {
+			case out <- streamEvent{Status: env.StreamStatus}:
+			case <-ctx.Done():
+				return nil, false
+			}
+			if env.StreamStatus == StreamStatusGoAway {
+				return nil, true
+			}
+		case streamMessageError:
+			return &StreamError{
+				Code:    env.Error,
+				Message: env.Message,
+				RawBody: append([]byte(nil), raw...),
+			}, false
+		}
+	}
+	return nil, false
 }
