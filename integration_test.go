@@ -366,6 +366,47 @@ func TestIntegration_StreamPositions(t *testing.T) {
 	}
 }
 
+func TestIntegration_StreamBars(t *testing.T) {
+	c := integrationClient(t)
+
+	const wantBars = 5
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	events, err := c.MarketData().StreamBars(
+		ctx,
+		"SPY",
+		StreamBarsParams{Interval: 1, Unit: BarUnitMinute, BarsBack: wantBars},
+		WithoutReconnect(),
+	)
+	if err != nil {
+		t.Fatalf("StreamBars: %v", err)
+	}
+
+	// Bar streams don't emit EndSnapshot (unlike orders/positions/quotes).
+	// We exit after receiving the requested BarsBack historical bars.
+	var bars int
+	for ev := range events {
+		switch {
+		case ev.Err != nil:
+			t.Fatalf("stream error: %v", ev.Err)
+		case ev.Data != nil:
+			t.Logf("bar: %+v", *ev.Data)
+			bars++
+		case ev.Status != "":
+			t.Logf("status: %s", ev.Status)
+		}
+		if bars >= wantBars {
+			cancel()
+			break
+		}
+	}
+	if bars < wantBars {
+		t.Errorf("received %d bars, want >= %d", bars, wantBars)
+	}
+}
+
 func TestIntegration_StreamQuotes(t *testing.T) {
 	c := integrationClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
