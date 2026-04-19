@@ -72,3 +72,43 @@ func TestStreamOrders_ValidationRejectsTooMany(t *testing.T) {
 		t.Error("want error for >25 accountIDs")
 	}
 }
+
+func TestStreamOrdersByID_HappyPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		f := w.(http.Flusher)
+		w.Write([]byte(`{"OrderID":"o1","AccountID":"123"}` + "\n"))
+		f.Flush()
+		w.Write([]byte(`{"StreamStatus":"EndSnapshot"}` + "\n"))
+		f.Flush()
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+	svc := &BrokerageService{client: c}
+
+	events, err := svc.StreamOrdersByID(
+		context.Background(),
+		[]string{"123"},
+		[]string{"o1", "o2"},
+		WithoutReconnect(),
+	)
+	if err != nil {
+		t.Fatalf("StreamOrdersByID: %v", err)
+	}
+	for range events {
+	}
+	if gotPath != "/v3/brokerage/stream/accounts/123/orders/o1,o2" {
+		t.Errorf("path = %q", gotPath)
+	}
+}
+
+func TestStreamOrdersByID_ValidationRejectsEmptyOrderIDs(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	svc := &BrokerageService{client: c}
+	if _, err := svc.StreamOrdersByID(context.Background(), []string{"123"}, nil); err == nil {
+		t.Error("want error for empty orderIDs")
+	}
+}
