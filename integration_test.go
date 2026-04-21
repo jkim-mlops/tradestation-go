@@ -567,7 +567,7 @@ func TestIntegration_PlaceOrderConfirm(t *testing.T) {
 		OrderType:   OrderTypeLimit,
 		TradeAction: TradeActionBuy,
 		LimitPrice:  1, // far-below-market; preview only
-		TimeInForce: TimeInForce{Duration: DurationDay},
+		TimeInForce: TimeInForce{Duration: DurationGTC},
 	}
 	resp, err := c.OrderExecution().PlaceOrderConfirm(ctx, req)
 	if err != nil {
@@ -607,7 +607,7 @@ func TestIntegration_PlaceAndCancelOrder(t *testing.T) {
 		OrderType:   OrderTypeLimit,
 		TradeAction: TradeActionBuy,
 		LimitPrice:  1, // far-below-market, won't fill
-		TimeInForce: TimeInForce{Duration: DurationDay},
+		TimeInForce: TimeInForce{Duration: DurationGTC},
 	}
 	resp, err := c.OrderExecution().PlaceOrder(ctx, req)
 	if err != nil {
@@ -661,7 +661,7 @@ func TestIntegration_PlaceAndReplaceAndCancel(t *testing.T) {
 		OrderType:   OrderTypeLimit,
 		TradeAction: TradeActionBuy,
 		LimitPrice:  1,
-		TimeInForce: TimeInForce{Duration: DurationDay},
+		TimeInForce: TimeInForce{Duration: DurationGTC},
 	}
 	resp, err := c.OrderExecution().PlaceOrder(ctx, req)
 	if err != nil {
@@ -699,7 +699,7 @@ func TestIntegration_PlaceAndCancelOCOGroup(t *testing.T) {
 		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
 		OrderType: OrderTypeLimit, TradeAction: TradeActionBuy,
 		LimitPrice:  1, // won't fill
-		TimeInForce: TimeInForce{Duration: DurationDay},
+		TimeInForce: TimeInForce{Duration: DurationGTC},
 	}
 	legB := legA
 	legB.LimitPrice = 2 // also won't fill; different price so distinguishable
@@ -751,36 +751,32 @@ func TestIntegration_PlaceAndCancelBracketGroup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	parent := OrderRequest{
-		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
-		OrderType: OrderTypeLimit, TradeAction: TradeActionBuy,
-		LimitPrice:  1, // won't fill
-		TimeInForce: TimeInForce{Duration: DurationDay},
-	}
+	// TradeStation BRK groups are the exit OCO (profit + stop), both same
+	// side. The entry would be placed separately via OSO — not tested here.
 	profit := OrderRequest{
 		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
 		OrderType: OrderTypeLimit, TradeAction: TradeActionSell,
 		LimitPrice:  500, // unreachable profit target
-		TimeInForce: TimeInForce{Duration: DurationDay},
+		TimeInForce: TimeInForce{Duration: DurationGTC},
 	}
 	stop := OrderRequest{
 		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
 		OrderType: OrderTypeStopMarket, TradeAction: TradeActionSell,
 		StopPrice:   0.5, // unreachable stop
-		TimeInForce: TimeInForce{Duration: DurationDay},
+		TimeInForce: TimeInForce{Duration: DurationGTC},
 	}
 
 	group := OrderGroupRequest{
 		Type:   OrderGroupTypeBracket,
-		Orders: []OrderRequest{parent, profit, stop},
+		Orders: []OrderRequest{profit, stop},
 	}
 	resp, err := c.OrderExecution().PlaceOrderGroup(ctx, group)
 	if err != nil {
 		t.Fatalf("PlaceOrderGroup: %v", err)
 	}
 	t.Logf("placed: %+v, errors: %+v", resp.Orders, resp.Errors)
-	if len(resp.Orders) < 3 {
-		t.Fatalf("expected 3 orders, got %d (errors: %+v)", len(resp.Orders), resp.Errors)
+	if len(resp.Orders) < 2 {
+		t.Fatalf("expected 2 orders, got %d (errors: %+v)", len(resp.Orders), resp.Errors)
 	}
 
 	defer func() {
