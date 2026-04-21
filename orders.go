@@ -144,3 +144,14 @@ func (s *OrderService) CancelOrder(ctx context.Context, orderID string) error {
 	path := "/v3/orderexecution/orders/" + url.PathEscape(orderID)
 	return s.client.doJSON(ctx, "DELETE", path, nil, nil, nil)
 }
+
+func (s *OrderService) PlaceOrder(ctx context.Context, req OrderRequest) (*PlaceOrderResponse, error) {
+	if err := validateOrderRequest(&req); err != nil {
+		return nil, err
+	}
+	var out PlaceOrderResponse
+	if err := s.client.doJSON(ctx, "POST", "/v3/orderexecution/orders", nil, &req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

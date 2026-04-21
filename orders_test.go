@@ -2,6 +2,8 @@ package tradestation
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -306,5 +308,84 @@ func TestCancelOrder_RejectsEmptyID(t *testing.T) {
 	c := NewClient(Test, "id", "secret", "refresh")
 	if err := c.OrderExecution().CancelOrder(context.Background(), ""); err == nil {
 		t.Error("want error for empty orderID")
+	}
+}
+
+func TestPlaceOrder_RequestShape(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"Orders":[{"OrderID":"1184080","Message":"Order placed"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	resp, err := c.OrderExecution().PlaceOrder(context.Background(), validOrder())
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	if gotMethod != "POST" || gotPath != "/v3/orderexecution/orders" {
+		t.Errorf("method=%q path=%q", gotMethod, gotPath)
+	}
+
+	// Verify body encoded Quantity and LimitPrice as JSON strings.
+	var decoded map[string]any
+	if err := json.Unmarshal(gotBody, &decoded); err != nil {
+		t.Fatalf("body not JSON: %v", err)
+	}
+	if decoded["Quantity"] != "10" {
+		t.Errorf("Quantity = %v, want \"10\"", decoded["Quantity"])
+	}
+	if decoded["LimitPrice"] != "150" {
+		t.Errorf("LimitPrice = %v, want \"150\"", decoded["LimitPrice"])
+	}
+
+	if len(resp.Orders) != 1 || resp.Orders[0].OrderID != "1184080" {
+		t.Errorf("response wrong: %+v", resp)
+	}
+}
+
+func TestPlaceOrder_PartialError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{
+            "Orders":[{"OrderID":"1","Message":"ok"}],
+            "Errors":[{"OrderNumber":"0","Error":"InsufficientBuyingPower","Message":"denied"}]
+        }`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	resp, err := c.OrderExecution().PlaceOrder(context.Background(), validOrder())
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	if len(resp.Orders) != 1 || len(resp.Errors) != 1 {
+		t.Fatalf("want 1 order + 1 error: %+v", resp)
+	}
+	if resp.Errors[0].ErrorCode != "InsufficientBuyingPower" {
+		t.Errorf("ErrorCode = %q", resp.Errors[0].ErrorCode)
+	}
+}
+
+func TestPlaceOrder_ValidationBeforeHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("server should not be called")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	req := validOrder()
+	req.AccountID = ""
+	if _, err := c.OrderExecution().PlaceOrder(context.Background(), req); err == nil {
+		t.Error("want validation error")
 	}
 }
