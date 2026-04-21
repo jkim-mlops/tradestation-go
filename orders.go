@@ -155,3 +155,14 @@ func (s *OrderService) PlaceOrder(ctx context.Context, req OrderRequest) (*Place
 	}
 	return &out, nil
 }
+
+func (s *OrderService) PlaceOrderConfirm(ctx context.Context, req OrderRequest) (*ConfirmationResponse, error) {
+	if err := validateOrderRequest(&req); err != nil {
+		return nil, err
+	}
+	var out ConfirmationResponse
+	if err := s.client.doJSON(ctx, "POST", "/v3/orderexecution/orderconfirm", nil, &req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
