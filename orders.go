@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 )
 
 // OrderService bundles TradeStation Order Execution REST endpoints.
@@ -134,4 +135,12 @@ func (s *OrderService) GetRoutes(ctx context.Context) ([]OrderRoute, error) {
 		return nil, err
 	}
 	return resp.Routes, nil
+}
+
+func (s *OrderService) CancelOrder(ctx context.Context, orderID string) error {
+	if orderID == "" {
+		return errors.New("tradestation: CancelOrder requires an order ID")
+	}
+	path := "/v3/orderexecution/orders/" + url.PathEscape(orderID)
+	return s.client.doJSON(ctx, "DELETE", path, nil, nil, nil)
 }

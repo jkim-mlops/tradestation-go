@@ -278,3 +278,33 @@ func TestGetRoutes(t *testing.T) {
 		t.Errorf("decoded wrong: %+v", routes)
 	}
 }
+
+func TestCancelOrder_RequestShape(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"OrderID":"1184080","Message":"Cancel submitted"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	if err := c.OrderExecution().CancelOrder(context.Background(), "1184080"); err != nil {
+		t.Fatalf("CancelOrder: %v", err)
+	}
+	if gotMethod != "DELETE" {
+		t.Errorf("method = %q", gotMethod)
+	}
+	if gotPath != "/v3/orderexecution/orders/1184080" {
+		t.Errorf("path = %q", gotPath)
+	}
+}
+
+func TestCancelOrder_RejectsEmptyID(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	if err := c.OrderExecution().CancelOrder(context.Background(), ""); err == nil {
+		t.Error("want error for empty orderID")
+	}
+}
