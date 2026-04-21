@@ -1,6 +1,9 @@
 package tradestation
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -217,5 +220,35 @@ func TestValidateReplaceOrderRequest_AcceptsValidModification(t *testing.T) {
 	req := ReplaceOrderRequest{Quantity: 10}
 	if err := validateReplaceOrderRequest(&req); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestGetActivationTriggers(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"ActivationTriggers":[
+            {"Key":"STT","Name":"Single Trade Tick","Description":"..."},
+            {"Key":"DTT","Name":"Double Trade Tick","Description":"..."}
+        ]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	triggers, err := c.OrderExecution().GetActivationTriggers(context.Background())
+	if err != nil {
+		t.Fatalf("GetActivationTriggers: %v", err)
+	}
+	if gotMethod != "GET" {
+		t.Errorf("method = %q", gotMethod)
+	}
+	if gotPath != "/v3/orderexecution/activationtriggers" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(triggers) != 2 || triggers[0].Key != "STT" {
+		t.Errorf("decoded wrong: %+v", triggers)
 	}
 }

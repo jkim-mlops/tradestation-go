@@ -1,6 +1,7 @@
 package tradestation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -113,4 +114,14 @@ func validateReplaceOrderRequest(req *ReplaceOrderRequest) error {
 		return errors.New("tradestation: Duration=GTD requires TimeInForce.ExpirationDate")
 	}
 	return nil
+}
+
+func (s *OrderService) GetActivationTriggers(ctx context.Context) ([]ActivationTrigger, error) {
+	var resp struct {
+		ActivationTriggers []ActivationTrigger `json:"ActivationTriggers"`
+	}
+	if err := s.client.doJSON(ctx, "GET", "/v3/orderexecution/activationtriggers", nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.ActivationTriggers, nil
 }
