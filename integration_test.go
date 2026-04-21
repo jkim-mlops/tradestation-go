@@ -559,3 +559,106 @@ func TestIntegration_PlaceOrderConfirm(t *testing.T) {
 		t.Logf("error: %+v", e)
 	}
 }
+
+// requireOrderPlacementOptIn skips unless the destructive-tests env var is set.
+func requireOrderPlacementOptIn(t *testing.T) {
+	t.Helper()
+	if os.Getenv("TRADESTATION_INTEGRATION_PLACE_ORDERS") != "1" {
+		t.Skip("set TRADESTATION_INTEGRATION_PLACE_ORDERS=1 to run destructive order-placement tests")
+	}
+}
+
+func TestIntegration_PlaceAndCancelOrder(t *testing.T) {
+	requireOrderPlacementOptIn(t)
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	req := OrderRequest{
+		AccountID:   ids[0],
+		Symbol:      "AAPL",
+		Quantity:    1,
+		OrderType:   OrderTypeLimit,
+		TradeAction: TradeActionBuy,
+		LimitPrice:  1, // far-below-market, won't fill
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+	resp, err := c.OrderExecution().PlaceOrder(ctx, req)
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	t.Logf("placed: %+v, errors: %+v", resp.Orders, resp.Errors)
+	if len(resp.Orders) == 0 {
+		t.Fatalf("no order placed: errors=%+v", resp.Errors)
+	}
+	orderID := resp.Orders[0].OrderID
+
+	// Cleanup: cancel in defer so panics don't leak orders.
+	defer func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		if err := c.OrderExecution().CancelOrder(cctx, orderID); err != nil {
+			t.Logf("cancel cleanup failed for %s: %v", orderID, err)
+		}
+	}()
+
+	// Verify order is visible via GetOrders.
+	orders, err := c.Brokerage().GetOrders(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	var found bool
+	for _, o := range orders.Orders {
+		if o.OrderID == orderID {
+			t.Logf("found order: %+v", o)
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("placed order %s not found in GetOrders", orderID)
+	}
+}
+
+func TestIntegration_PlaceAndReplaceAndCancel(t *testing.T) {
+	requireOrderPlacementOptIn(t)
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	req := OrderRequest{
+		AccountID:   ids[0],
+		Symbol:      "AAPL",
+		Quantity:    1,
+		OrderType:   OrderTypeLimit,
+		TradeAction: TradeActionBuy,
+		LimitPrice:  1,
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+	resp, err := c.OrderExecution().PlaceOrder(ctx, req)
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	if len(resp.Orders) == 0 {
+		t.Fatalf("no order placed: errors=%+v", resp.Errors)
+	}
+	orderID := resp.Orders[0].OrderID
+
+	defer func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		if err := c.OrderExecution().CancelOrder(cctx, orderID); err != nil {
+			t.Logf("cancel cleanup failed for %s: %v", orderID, err)
+		}
+	}()
+
+	replaced, err := c.OrderExecution().ReplaceOrder(ctx, orderID, ReplaceOrderRequest{Quantity: 2})
+	if err != nil {
+		t.Fatalf("ReplaceOrder: %v", err)
+	}
+	t.Logf("replaced: %+v", replaced)
+}
