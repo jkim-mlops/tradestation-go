@@ -27,6 +27,12 @@ func (f *StringFloat64) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MarshalJSON emits a JSON-encoded string ("10.5"), matching TradeStation's
+// wire format for numeric fields in request bodies.
+func (f StringFloat64) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.AppendQuote(nil, strconv.FormatFloat(float64(f), 'f', -1, 64))), nil
+}
+
 // StringInt64 unmarshals from both JSON strings ("100") and numbers (100).
 type StringInt64 int64
 
@@ -46,6 +52,12 @@ func (i *StringInt64) UnmarshalJSON(data []byte) error {
 	}
 	*i = StringInt64(n)
 	return nil
+}
+
+// MarshalJSON emits a JSON-encoded string ("100"), matching TradeStation's
+// wire format for numeric fields in request bodies.
+func (i StringInt64) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.AppendQuote(nil, strconv.FormatInt(int64(i), 10))), nil
 }
 
 // MarketData types
@@ -304,18 +316,217 @@ type ConditionalOrder struct {
 	Relationship string `json:"Relationship"`
 }
 
-// OrderRequest stays as-is (used by OrderService stubs, out of scope for this branch).
+// OrderRequest is the body of POST /orderexecution/orders and POST /orderconfirm.
+// Required fields: AccountID, Symbol, Quantity, OrderType, TradeAction,
+// TimeInForce.Duration. OrderType determines which price fields must be set.
 type OrderRequest struct {
-	AccountID   string  `json:"AccountID"`
-	Symbol      string  `json:"Symbol"`
-	Quantity    int64   `json:"Quantity"`
-	OrderType   string  `json:"OrderType"`
-	LimitPrice  float64 `json:"LimitPrice,omitempty"`
-	StopPrice   float64 `json:"StopPrice,omitempty"`
-	TradeAction string  `json:"TradeAction"`
-	Duration    string  `json:"Duration"`
-	Route       string  `json:"Route,omitempty"`
+	// AccountID is the TradeStation account ID the order is placed against.
+	AccountID string `json:"AccountID"`
+
+	// Symbol is the security identifier (e.g. "AAPL" for stock, option
+	// symbols follow TradeStation's symbology format).
+	Symbol string `json:"Symbol"`
+
+	// Quantity is the number of shares or contracts. Must be positive.
+	// Supports fractional values for assets that permit them.
+	Quantity StringFloat64 `json:"Quantity"`
+
+	// OrderType — see OrderType constants for price-field requirements.
+	OrderType OrderType `json:"OrderType"`
+
+	// TradeAction — see TradeAction constants for equity vs option semantics.
+	TradeAction TradeAction `json:"TradeAction"`
+
+	// LimitPrice is required for OrderTypeLimit and OrderTypeStopLimit;
+	// must not be set for Market or StopMarket.
+	LimitPrice StringFloat64 `json:"LimitPrice,omitempty"`
+
+	// StopPrice is required for OrderTypeStopMarket and OrderTypeStopLimit;
+	// must not be set for Market or Limit.
+	StopPrice StringFloat64 `json:"StopPrice,omitempty"`
+
+	// TimeInForce controls how long the order remains active. Duration is
+	// required; ExpirationDate is required when Duration=DurationGTD.
+	TimeInForce TimeInForce `json:"TimeInForce"`
+
+	// Route is the execution venue ID. Use OrderService.GetRoutes to list
+	// valid routes. Optional — server picks a default when unset.
+	Route string `json:"Route,omitempty"`
+
+	// BuyingPowerWarning controls buying-power-exceeded handling, typically
+	// "Enforce" (default) or "Preconfirmed".
+	BuyingPowerWarning string `json:"BuyingPowerWarning,omitempty"`
+
+	// AdvancedOptions is an opaque string for advanced order features
+	// (trailing stops, activation triggers, all-or-none, etc.). See spec.
+	AdvancedOptions string `json:"AdvancedOptions,omitempty"`
+
+	// OrderConfirmID references a prior PlaceOrderConfirm response,
+	// binding placement to a previewed order for safety.
+	OrderConfirmID string `json:"OrderConfirmID,omitempty"`
+
+	// Legs populates multi-leg (option spread) orders. Must use option
+	// TradeActions (BUYTOOPEN / SELLTOOPEN / BUYTOCLOSE / SELLTOCLOSE).
+	Legs []OrderLegRequest `json:"Legs,omitempty"`
+
+	// OSOs (order-sends-order) fire child order groups only if this parent
+	// order fills. Nested OSOs are allowed.
+	OSOs []OSOOrderRequest `json:"OSOs,omitempty"`
 }
+
+// TimeInForce controls how long an order remains active before
+// automatic cancellation.
+type TimeInForce struct {
+	// Duration is required; see Duration constants for semantics.
+	Duration Duration `json:"Duration"`
+	// ExpirationDate is an ISO8601 date (e.g. "2026-12-31"). Required when
+	// Duration is DurationGTD; ignored for other durations.
+	ExpirationDate string `json:"ExpirationDate,omitempty"`
+}
+
+// OrderLegRequest describes one leg of a multi-leg option order.
+// TradeAction must be an option-variant action.
+type OrderLegRequest struct {
+	Symbol         string        `json:"Symbol"`
+	Quantity       StringFloat64 `json:"Quantity"`
+	TradeAction    TradeAction   `json:"TradeAction"`
+	AssetType      string        `json:"AssetType,omitempty"`
+	ExpirationDate string        `json:"ExpirationDate,omitempty"` // option expiration
+	StrikePrice    StringFloat64 `json:"StrikePrice,omitempty"`
+	OptionType     string        `json:"OptionType,omitempty"` // CALL | PUT
+}
+
+// OSOOrderRequest (order-sends-order) describes a child order group that
+// activates only when the parent order fills. The child group itself has a
+// Type (bracket, OCO, or normal) and contains 1+ orders. Chaining is allowed
+// via OrderRequest.OSOs on the child orders.
+type OSOOrderRequest struct {
+	Type   OrderGroupType `json:"Type"`
+	Orders []OrderRequest `json:"Orders"`
+}
+
+// ReplaceOrderRequest is the body of PUT /orders/{orderID}. Contains only
+// fields the spec allows to modify on an open order. All fields are optional;
+// at least one must be set or the request is rejected at the validation
+// boundary.
+type ReplaceOrderRequest struct {
+	Quantity        StringFloat64 `json:"Quantity,omitempty"`
+	LimitPrice      StringFloat64 `json:"LimitPrice,omitempty"`
+	StopPrice       StringFloat64 `json:"StopPrice,omitempty"`
+	TimeInForce     *TimeInForce  `json:"TimeInForce,omitempty"`
+	AdvancedOptions string        `json:"AdvancedOptions,omitempty"`
+}
+
+// OrderGroupRequest is the body of POST /ordergroups and POST /ordergroupsconfirm.
+// Must contain at least 2 orders.
+type OrderGroupRequest struct {
+	// Type determines how the Orders relate after placement.
+	// See OrderGroupType constants.
+	Type OrderGroupType `json:"Type"`
+	// Orders is the list of orders in the group (2+ required).
+	Orders []OrderRequest `json:"Orders"`
+}
+
+// OrderType is the execution style for an order. Different OrderTypes require
+// different price fields on OrderRequest:
+//
+//   - OrderTypeMarket:     no price fields
+//   - OrderTypeLimit:      LimitPrice required
+//   - OrderTypeStopMarket: StopPrice required
+//   - OrderTypeStopLimit:  both LimitPrice and StopPrice required
+type OrderType string
+
+const (
+	// OrderTypeMarket executes immediately at the best available price.
+	// Must not set LimitPrice or StopPrice.
+	OrderTypeMarket OrderType = "Market"
+
+	// OrderTypeLimit executes only at LimitPrice or better.
+	// Requires OrderRequest.LimitPrice > 0.
+	OrderTypeLimit OrderType = "Limit"
+
+	// OrderTypeStopMarket becomes a market order once the last trade reaches
+	// StopPrice. Requires OrderRequest.StopPrice > 0.
+	OrderTypeStopMarket OrderType = "StopMarket"
+
+	// OrderTypeStopLimit becomes a limit order once StopPrice is reached,
+	// then executes only at LimitPrice or better. Requires both
+	// OrderRequest.StopPrice > 0 and OrderRequest.LimitPrice > 0.
+	OrderTypeStopLimit OrderType = "StopLimit"
+)
+
+// TradeAction names the buy/sell side of an order. Equity and option trades
+// use different action sets:
+//
+//   - Equities: BUY, SELL, BUYTOCOVER, SELLSHORT
+//   - Options:  BUYTOOPEN, BUYTOCLOSE, SELLTOOPEN, SELLTOCLOSE
+//
+// Using an option action on an equity order (or vice versa) will be rejected
+// by the server.
+type TradeAction string
+
+const (
+	// TradeActionBuy opens or increases a long equity position.
+	TradeActionBuy TradeAction = "BUY"
+	// TradeActionSell closes or reduces a long equity position.
+	TradeActionSell TradeAction = "SELL"
+	// TradeActionBuyToCover closes a short equity position by buying back
+	// the borrowed shares.
+	TradeActionBuyToCover TradeAction = "BUYTOCOVER"
+	// TradeActionSellShort opens or increases a short equity position.
+	// Requires a margin account and locatable borrow.
+	TradeActionSellShort TradeAction = "SELLSHORT"
+	// TradeActionBuyToOpen opens a new long option position. Options only.
+	TradeActionBuyToOpen TradeAction = "BUYTOOPEN"
+	// TradeActionBuyToClose closes an existing short option position. Options only.
+	TradeActionBuyToClose TradeAction = "BUYTOCLOSE"
+	// TradeActionSellToOpen opens a new short option position (write). Options only.
+	TradeActionSellToOpen TradeAction = "SELLTOOPEN"
+	// TradeActionSellToClose closes an existing long option position. Options only.
+	TradeActionSellToClose TradeAction = "SELLTOCLOSE"
+)
+
+// Duration is the time-in-force policy — how long an order remains active
+// before automatic cancellation.
+type Duration string
+
+const (
+	// DurationDay: active only during the current trading session.
+	DurationDay Duration = "DAY"
+	// DurationGTC (good-til-canceled): active across sessions until filled or
+	// explicitly canceled, subject to broker maximum GTC age.
+	DurationGTC Duration = "GTC"
+	// DurationGTD (good-til-date): active until TimeInForce.ExpirationDate.
+	// Requires TimeInForce.ExpirationDate to be a future ISO8601 date.
+	DurationGTD Duration = "GTD"
+	// DurationIOC (immediate-or-cancel): any portion that can't fill immediately
+	// is canceled. Partial fills allowed.
+	DurationIOC Duration = "IOC"
+	// DurationFOK (fill-or-kill): the entire quantity must fill immediately or
+	// the order is canceled. No partial fills.
+	DurationFOK Duration = "FOK"
+	// DurationOPG: participates in the opening auction only.
+	DurationOPG Duration = "OPG"
+	// DurationCLO: participates in the closing auction only.
+	DurationCLO Duration = "CLO"
+)
+
+// OrderGroupType determines how orders in a PlaceOrderGroup relate to each
+// other after placement.
+type OrderGroupType string
+
+const (
+	// OrderGroupTypeBracket (BRK): a parent order with one or more child
+	// exits (typically a profit-target limit plus a stop-loss). When one
+	// child fills or cancels, the others are automatically canceled.
+	OrderGroupTypeBracket OrderGroupType = "BRK"
+	// OrderGroupTypeOCO (one-cancels-other): peer orders where any fill
+	// cancels the remaining orders in the group. No parent.
+	OrderGroupTypeOCO OrderGroupType = "OCO"
+	// OrderGroupTypeNormal: orders are submitted together but operate
+	// independently (not linked).
+	OrderGroupTypeNormal OrderGroupType = "NORMAL"
+)
 
 // Brokerage response wrappers — carry both data and partial per-account errors.
 
@@ -343,4 +554,67 @@ type PositionsResponse struct {
 type OrdersResponse struct {
 	Orders []Order        `json:"Orders"`
 	Errors []AccountError `json:"Errors,omitempty"`
+}
+
+// PlaceOrderResponse is the response body of PlaceOrder / PlaceOrderGroup.
+// Orders contains successfully placed orders; Errors contains per-order
+// rejections. A 200 response may carry both.
+type PlaceOrderResponse struct {
+	Orders []PlacedOrder `json:"Orders"`
+	Errors []OrderError  `json:"Errors,omitempty"`
+}
+
+// PlacedOrder is the thin confirmation returned by the server for each
+// successfully placed order. Use Brokerage.GetOrdersByID to fetch the full
+// Order payload.
+type PlacedOrder struct {
+	OrderID string `json:"OrderID"`
+	Message string `json:"Message"`
+}
+
+// OrderError is a per-order rejection inside a placement response.
+type OrderError struct {
+	// OrderNumber is the index into the request's Orders array (or "0" for
+	// single-order placements).
+	OrderNumber string `json:"OrderNumber"`
+	// ErrorCode is the machine-readable error category (e.g.
+	// "InsufficientBuyingPower"). Named ErrorCode in Go to avoid collision
+	// with the error interface method.
+	ErrorCode string `json:"Error"`
+	Message   string `json:"Message"`
+}
+
+// ConfirmationResponse is the response body of PlaceOrderConfirm /
+// PlaceOrderGroupConfirm — previews without execution.
+type ConfirmationResponse struct {
+	Confirmations []OrderConfirmation `json:"Confirmations"`
+	Errors        []OrderError        `json:"Errors,omitempty"`
+}
+
+// OrderConfirmation previews an order. Pass OrderConfirmID on a subsequent
+// PlaceOrder to submit the previewed order for execution.
+type OrderConfirmation struct {
+	OrderConfirmID           string        `json:"OrderConfirmID"`
+	Route                    string        `json:"Route"`
+	Duration                 string        `json:"Duration"`
+	Account                  string        `json:"Account"`
+	SummaryMessage           string        `json:"SummaryMessage"`
+	EstimatedCommission      StringFloat64 `json:"EstimatedCommission"`
+	EstimatedPrice           StringFloat64 `json:"EstimatedPrice"`
+	EstimatedPriceDisplay    string        `json:"EstimatedPriceDisplay"`
+	EstimatedCost            StringFloat64 `json:"EstimatedCost"`
+	EstimatedCostDisplay     string        `json:"EstimatedCostDisplay"`
+	DebitCreditEstimatedCost StringFloat64 `json:"DebitCreditEstimatedCost"`
+	InitialMarginDisplay     string        `json:"InitialMarginDisplay"`
+	ProductCurrency          string        `json:"ProductCurrency"`
+	AccountCurrency          string        `json:"AccountCurrency"`
+}
+
+// ActivationTrigger describes a valid activation-trigger identifier for
+// stop / trigger orders. Retrieved via GetActivationTriggers. Use the Key
+// in OrderRequest.AdvancedOptions.
+type ActivationTrigger struct {
+	Key         string `json:"Key"` // e.g. "STT", "DTT", "SBA"
+	Name        string `json:"Name"`
+	Description string `json:"Description"`
 }

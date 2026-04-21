@@ -223,6 +223,30 @@ func fetchSandboxAccountIDs(t *testing.T, c *Client) []string {
 	return ids
 }
 
+// fetchSandboxEquityAccountIDs returns only accounts capable of equity orders
+// (AccountType Margin or Cash). Futures accounts can't accept AAPL/SPY orders
+// and will fail with "Invalid account for the asset type".
+func fetchSandboxEquityAccountIDs(t *testing.T, c *Client) []string {
+	t.Helper()
+	svc := &BrokerageService{client: c}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	accounts, err := svc.GetAccounts(ctx)
+	if err != nil {
+		t.Fatalf("fetch accounts: %v", err)
+	}
+	ids := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		if a.AccountType == "Margin" || a.AccountType == "Cash" {
+			ids = append(ids, a.AccountID)
+		}
+	}
+	if len(ids) == 0 {
+		t.Skip("no equity (Margin/Cash) accounts on sandbox — skipping dependent tests")
+	}
+	return ids
+}
+
 func TestIntegration_GetBalances(t *testing.T) {
 	c := integrationClient(t)
 	ids := fetchSandboxAccountIDs(t, c)
@@ -492,5 +516,294 @@ func TestIntegration_StreamQuotes(t *testing.T) {
 		if q.Ask <= 0 || q.Bid <= 0 {
 			t.Errorf("%s quote missing prices: %+v", sym, q)
 		}
+	}
+}
+
+func TestIntegration_GetActivationTriggers(t *testing.T) {
+	c := integrationClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	triggers, err := c.OrderExecution().GetActivationTriggers(ctx)
+	if err != nil {
+		t.Fatalf("GetActivationTriggers: %v", err)
+	}
+	for _, at := range triggers {
+		t.Logf("trigger: %+v", at)
+	}
+	if len(triggers) == 0 {
+		t.Error("no triggers returned")
+	}
+}
+
+func TestIntegration_GetRoutes(t *testing.T) {
+	c := integrationClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	routes, err := c.OrderExecution().GetRoutes(ctx)
+	if err != nil {
+		t.Fatalf("GetRoutes: %v", err)
+	}
+	for _, r := range routes {
+		t.Logf("route: %+v", r)
+	}
+	if len(routes) == 0 {
+		t.Error("no routes returned")
+	}
+}
+
+func TestIntegration_PlaceOrderConfirm(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxEquityAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req := OrderRequest{
+		AccountID:   ids[0],
+		Symbol:      "AAPL",
+		Quantity:    1,
+		OrderType:   OrderTypeLimit,
+		TradeAction: TradeActionBuy,
+		LimitPrice:  1, // far-below-market; preview only
+		TimeInForce: TimeInForce{Duration: DurationGTC},
+	}
+	resp, err := c.OrderExecution().PlaceOrderConfirm(ctx, req)
+	if err != nil {
+		t.Fatalf("PlaceOrderConfirm: %v", err)
+	}
+	if len(resp.Confirmations) == 0 && len(resp.Errors) == 0 {
+		t.Error("empty confirmation response")
+	}
+	for _, c := range resp.Confirmations {
+		t.Logf("confirmation: %+v", c)
+	}
+	for _, e := range resp.Errors {
+		t.Logf("error: %+v", e)
+	}
+}
+
+// requireOrderPlacementOptIn skips unless the destructive-tests env var is set.
+func requireOrderPlacementOptIn(t *testing.T) {
+	t.Helper()
+	if os.Getenv("TRADESTATION_INTEGRATION_PLACE_ORDERS") != "1" {
+		t.Skip("set TRADESTATION_INTEGRATION_PLACE_ORDERS=1 to run destructive order-placement tests")
+	}
+}
+
+func TestIntegration_PlaceAndCancelOrder(t *testing.T) {
+	requireOrderPlacementOptIn(t)
+	c := integrationClient(t)
+	ids := fetchSandboxEquityAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	req := OrderRequest{
+		AccountID:   ids[0],
+		Symbol:      "AAPL",
+		Quantity:    1,
+		OrderType:   OrderTypeLimit,
+		TradeAction: TradeActionBuy,
+		LimitPrice:  1, // far-below-market, won't fill
+		TimeInForce: TimeInForce{Duration: DurationGTC},
+	}
+	resp, err := c.OrderExecution().PlaceOrder(ctx, req)
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	t.Logf("placed: %+v, errors: %+v", resp.Orders, resp.Errors)
+	if len(resp.Orders) == 0 {
+		t.Fatalf("no order placed: errors=%+v", resp.Errors)
+	}
+	orderID := resp.Orders[0].OrderID
+
+	// Cleanup: cancel in defer so panics don't leak orders.
+	defer func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		if err := c.OrderExecution().CancelOrder(cctx, orderID); err != nil {
+			t.Logf("cancel cleanup failed for %s: %v", orderID, err)
+		}
+	}()
+
+	// Verify order is visible via GetOrders.
+	orders, err := c.Brokerage().GetOrders(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	var found bool
+	for _, o := range orders.Orders {
+		if o.OrderID == orderID {
+			t.Logf("found order: %+v", o)
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("placed order %s not found in GetOrders", orderID)
+	}
+}
+
+func TestIntegration_PlaceAndReplaceAndCancel(t *testing.T) {
+	requireOrderPlacementOptIn(t)
+	c := integrationClient(t)
+	ids := fetchSandboxEquityAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	req := OrderRequest{
+		AccountID:   ids[0],
+		Symbol:      "AAPL",
+		Quantity:    1,
+		OrderType:   OrderTypeLimit,
+		TradeAction: TradeActionBuy,
+		LimitPrice:  1,
+		TimeInForce: TimeInForce{Duration: DurationGTC},
+	}
+	resp, err := c.OrderExecution().PlaceOrder(ctx, req)
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+	if len(resp.Orders) == 0 {
+		t.Fatalf("no order placed: errors=%+v", resp.Errors)
+	}
+	orderID := resp.Orders[0].OrderID
+
+	defer func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		if err := c.OrderExecution().CancelOrder(cctx, orderID); err != nil {
+			t.Logf("cancel cleanup failed for %s: %v", orderID, err)
+		}
+	}()
+
+	replaced, err := c.OrderExecution().ReplaceOrder(ctx, orderID, ReplaceOrderRequest{Quantity: 2})
+	if err != nil {
+		t.Fatalf("ReplaceOrder: %v", err)
+	}
+	t.Logf("replaced: %+v", replaced)
+}
+
+func TestIntegration_PlaceAndCancelOCOGroup(t *testing.T) {
+	requireOrderPlacementOptIn(t)
+	c := integrationClient(t)
+	ids := fetchSandboxEquityAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	legA := OrderRequest{
+		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
+		OrderType: OrderTypeLimit, TradeAction: TradeActionBuy,
+		LimitPrice:  1, // won't fill
+		TimeInForce: TimeInForce{Duration: DurationGTC},
+	}
+	legB := legA
+	legB.LimitPrice = 2 // also won't fill; different price so distinguishable
+
+	group := OrderGroupRequest{Type: OrderGroupTypeOCO, Orders: []OrderRequest{legA, legB}}
+	resp, err := c.OrderExecution().PlaceOrderGroup(ctx, group)
+	if err != nil {
+		t.Fatalf("PlaceOrderGroup: %v", err)
+	}
+	t.Logf("placed: %+v, errors: %+v", resp.Orders, resp.Errors)
+	if len(resp.Orders) < 2 {
+		t.Fatalf("expected 2 orders, got %d (errors: %+v)", len(resp.Orders), resp.Errors)
+	}
+
+	defer func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		for _, o := range resp.Orders {
+			if err := c.OrderExecution().CancelOrder(cctx, o.OrderID); err != nil {
+				t.Logf("cancel cleanup failed for %s: %v", o.OrderID, err)
+			}
+		}
+	}()
+
+	// Verify both visible in GetOrders.
+	orders, err := c.Brokerage().GetOrders(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	seen := make(map[string]bool)
+	for _, o := range orders.Orders {
+		for _, placed := range resp.Orders {
+			if o.OrderID == placed.OrderID {
+				seen[o.OrderID] = true
+				t.Logf("found order: %+v", o)
+			}
+		}
+	}
+	if len(seen) != len(resp.Orders) {
+		t.Errorf("saw %d of %d placed orders in GetOrders", len(seen), len(resp.Orders))
+	}
+}
+
+func TestIntegration_PlaceAndCancelBracketGroup(t *testing.T) {
+	requireOrderPlacementOptIn(t)
+	c := integrationClient(t)
+	ids := fetchSandboxEquityAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// TradeStation BRK groups are the exit OCO (profit + stop), both same
+	// side. The entry would be placed separately via OSO — not tested here.
+	profit := OrderRequest{
+		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
+		OrderType: OrderTypeLimit, TradeAction: TradeActionSell,
+		LimitPrice:  500, // unreachable profit target
+		TimeInForce: TimeInForce{Duration: DurationGTC},
+	}
+	stop := OrderRequest{
+		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
+		OrderType: OrderTypeStopMarket, TradeAction: TradeActionSell,
+		StopPrice:   0.5, // unreachable stop
+		TimeInForce: TimeInForce{Duration: DurationGTC},
+	}
+
+	group := OrderGroupRequest{
+		Type:   OrderGroupTypeBracket,
+		Orders: []OrderRequest{profit, stop},
+	}
+	resp, err := c.OrderExecution().PlaceOrderGroup(ctx, group)
+	if err != nil {
+		t.Fatalf("PlaceOrderGroup: %v", err)
+	}
+	t.Logf("placed: %+v, errors: %+v", resp.Orders, resp.Errors)
+	if len(resp.Orders) < 2 {
+		t.Fatalf("expected 2 orders, got %d (errors: %+v)", len(resp.Orders), resp.Errors)
+	}
+
+	defer func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		for _, o := range resp.Orders {
+			if err := c.OrderExecution().CancelOrder(cctx, o.OrderID); err != nil {
+				t.Logf("cancel cleanup failed for %s: %v", o.OrderID, err)
+			}
+		}
+	}()
+
+	// Verify all three visible in GetOrders.
+	orders, err := c.Brokerage().GetOrders(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	seen := make(map[string]bool)
+	for _, o := range orders.Orders {
+		for _, placed := range resp.Orders {
+			if o.OrderID == placed.OrderID {
+				seen[o.OrderID] = true
+				t.Logf("found order: %+v", o)
+			}
+		}
+	}
+	if len(seen) != len(resp.Orders) {
+		t.Errorf("saw %d of %d placed orders in GetOrders", len(seen), len(resp.Orders))
 	}
 }
