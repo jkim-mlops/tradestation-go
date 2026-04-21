@@ -166,3 +166,18 @@ func (s *OrderService) PlaceOrderConfirm(ctx context.Context, req OrderRequest) 
 	}
 	return &out, nil
 }
+
+func (s *OrderService) ReplaceOrder(ctx context.Context, orderID string, req ReplaceOrderRequest) (*Order, error) {
+	if orderID == "" {
+		return nil, errors.New("tradestation: ReplaceOrder requires an order ID")
+	}
+	if err := validateReplaceOrderRequest(&req); err != nil {
+		return nil, err
+	}
+	path := "/v3/orderexecution/orders/" + url.PathEscape(orderID)
+	var out Order
+	if err := s.client.doJSON(ctx, "PUT", path, nil, &req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

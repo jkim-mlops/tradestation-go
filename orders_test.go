@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -410,5 +411,58 @@ func TestPlaceOrderConfirm_RequestShape(t *testing.T) {
 	}
 	if len(resp.Confirmations) != 1 || resp.Confirmations[0].OrderConfirmID != "abc" {
 		t.Errorf("decoded wrong: %+v", resp)
+	}
+}
+
+func TestReplaceOrder_RequestShape(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"OrderID":"1184080","AccountID":"123","Status":"Open"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	o, err := c.OrderExecution().ReplaceOrder(context.Background(), "1184080", ReplaceOrderRequest{Quantity: 20})
+	if err != nil {
+		t.Fatalf("ReplaceOrder: %v", err)
+	}
+	if gotMethod != "PUT" {
+		t.Errorf("method = %q", gotMethod)
+	}
+	if gotPath != "/v3/orderexecution/orders/1184080" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !strings.Contains(string(gotBody), `"Quantity":"20"`) {
+		t.Errorf("body did not encode Quantity as string: %s", string(gotBody))
+	}
+	if o.OrderID != "1184080" {
+		t.Errorf("response decoded wrong: %+v", o)
+	}
+}
+
+func TestReplaceOrder_RejectsEmptyID(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	if _, err := c.OrderExecution().ReplaceOrder(context.Background(), "", ReplaceOrderRequest{Quantity: 1}); err == nil {
+		t.Error("want error for empty orderID")
+	}
+}
+
+func TestReplaceOrder_ValidationBeforeHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("server should not be called")
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	if _, err := c.OrderExecution().ReplaceOrder(context.Background(), "1", ReplaceOrderRequest{}); err == nil {
+		t.Error("want validation error for empty mods")
 	}
 }
