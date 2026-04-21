@@ -192,3 +192,14 @@ func (s *OrderService) PlaceOrderGroup(ctx context.Context, req OrderGroupReques
 	}
 	return &out, nil
 }
+
+func (s *OrderService) PlaceOrderGroupConfirm(ctx context.Context, req OrderGroupRequest) (*ConfirmationResponse, error) {
+	if err := validateOrderGroupRequest(&req); err != nil {
+		return nil, err
+	}
+	var out ConfirmationResponse
+	if err := s.client.doJSON(ctx, "POST", "/v3/orderexecution/ordergroupsconfirm", nil, &req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

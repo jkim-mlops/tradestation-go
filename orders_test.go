@@ -506,3 +506,30 @@ func TestPlaceOrderGroup_ValidationBeforeHTTP(t *testing.T) {
 		t.Error("want validation error")
 	}
 }
+
+func TestPlaceOrderGroupConfirm_RequestShape(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"Confirmations":[{"OrderConfirmID":"abc","Route":"R","Duration":"DAY","Account":"123","SummaryMessage":"ok","EstimatedCommission":"0","EstimatedPrice":"1","EstimatedCost":"1","DebitCreditEstimatedCost":"1"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	group := OrderGroupRequest{
+		Type:   OrderGroupTypeBracket,
+		Orders: []OrderRequest{validOrder(), validOrder()},
+	}
+	resp, err := c.OrderExecution().PlaceOrderGroupConfirm(context.Background(), group)
+	if err != nil {
+		t.Fatalf("PlaceOrderGroupConfirm: %v", err)
+	}
+	if gotPath != "/v3/orderexecution/ordergroupsconfirm" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(resp.Confirmations) != 1 {
+		t.Errorf("confirmations = %d, want 1", len(resp.Confirmations))
+	}
+}
