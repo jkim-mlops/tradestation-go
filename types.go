@@ -27,6 +27,12 @@ func (f *StringFloat64) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MarshalJSON emits a JSON-encoded string ("10.5"), matching TradeStation's
+// wire format for numeric fields in request bodies.
+func (f StringFloat64) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.AppendQuote(nil, strconv.FormatFloat(float64(f), 'f', -1, 64))), nil
+}
+
 // StringInt64 unmarshals from both JSON strings ("100") and numbers (100).
 type StringInt64 int64
 
@@ -46,6 +52,12 @@ func (i *StringInt64) UnmarshalJSON(data []byte) error {
 	}
 	*i = StringInt64(n)
 	return nil
+}
+
+// MarshalJSON emits a JSON-encoded string ("100"), matching TradeStation's
+// wire format for numeric fields in request bodies.
+func (i StringInt64) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.AppendQuote(nil, strconv.FormatInt(int64(i), 10))), nil
 }
 
 // MarketData types
@@ -316,6 +328,107 @@ type OrderRequest struct {
 	Duration    string  `json:"Duration"`
 	Route       string  `json:"Route,omitempty"`
 }
+
+// OrderType is the execution style for an order. Different OrderTypes require
+// different price fields on OrderRequest:
+//
+//   - OrderTypeMarket:     no price fields
+//   - OrderTypeLimit:      LimitPrice required
+//   - OrderTypeStopMarket: StopPrice required
+//   - OrderTypeStopLimit:  both LimitPrice and StopPrice required
+type OrderType string
+
+const (
+	// OrderTypeMarket executes immediately at the best available price.
+	// Must not set LimitPrice or StopPrice.
+	OrderTypeMarket OrderType = "Market"
+
+	// OrderTypeLimit executes only at LimitPrice or better.
+	// Requires OrderRequest.LimitPrice > 0.
+	OrderTypeLimit OrderType = "Limit"
+
+	// OrderTypeStopMarket becomes a market order once the last trade reaches
+	// StopPrice. Requires OrderRequest.StopPrice > 0.
+	OrderTypeStopMarket OrderType = "StopMarket"
+
+	// OrderTypeStopLimit becomes a limit order once StopPrice is reached,
+	// then executes only at LimitPrice or better. Requires both
+	// OrderRequest.StopPrice > 0 and OrderRequest.LimitPrice > 0.
+	OrderTypeStopLimit OrderType = "StopLimit"
+)
+
+// TradeAction names the buy/sell side of an order. Equity and option trades
+// use different action sets:
+//
+//   - Equities: BUY, SELL, BUYTOCOVER, SELLSHORT
+//   - Options:  BUYTOOPEN, BUYTOCLOSE, SELLTOOPEN, SELLTOCLOSE
+//
+// Using an option action on an equity order (or vice versa) will be rejected
+// by the server.
+type TradeAction string
+
+const (
+	// TradeActionBuy opens or increases a long equity position.
+	TradeActionBuy TradeAction = "BUY"
+	// TradeActionSell closes or reduces a long equity position.
+	TradeActionSell TradeAction = "SELL"
+	// TradeActionBuyToCover closes a short equity position by buying back
+	// the borrowed shares.
+	TradeActionBuyToCover TradeAction = "BUYTOCOVER"
+	// TradeActionSellShort opens or increases a short equity position.
+	// Requires a margin account and locatable borrow.
+	TradeActionSellShort TradeAction = "SELLSHORT"
+	// TradeActionBuyToOpen opens a new long option position. Options only.
+	TradeActionBuyToOpen TradeAction = "BUYTOOPEN"
+	// TradeActionBuyToClose closes an existing short option position. Options only.
+	TradeActionBuyToClose TradeAction = "BUYTOCLOSE"
+	// TradeActionSellToOpen opens a new short option position (write). Options only.
+	TradeActionSellToOpen TradeAction = "SELLTOOPEN"
+	// TradeActionSellToClose closes an existing long option position. Options only.
+	TradeActionSellToClose TradeAction = "SELLTOCLOSE"
+)
+
+// Duration is the time-in-force policy — how long an order remains active
+// before automatic cancellation.
+type Duration string
+
+const (
+	// DurationDay: active only during the current trading session.
+	DurationDay Duration = "DAY"
+	// DurationGTC (good-til-canceled): active across sessions until filled or
+	// explicitly canceled, subject to broker maximum GTC age.
+	DurationGTC Duration = "GTC"
+	// DurationGTD (good-til-date): active until TimeInForce.ExpirationDate.
+	// Requires TimeInForce.ExpirationDate to be a future ISO8601 date.
+	DurationGTD Duration = "GTD"
+	// DurationIOC (immediate-or-cancel): any portion that can't fill immediately
+	// is canceled. Partial fills allowed.
+	DurationIOC Duration = "IOC"
+	// DurationFOK (fill-or-kill): the entire quantity must fill immediately or
+	// the order is canceled. No partial fills.
+	DurationFOK Duration = "FOK"
+	// DurationOPG: participates in the opening auction only.
+	DurationOPG Duration = "OPG"
+	// DurationCLO: participates in the closing auction only.
+	DurationCLO Duration = "CLO"
+)
+
+// OrderGroupType determines how orders in a PlaceOrderGroup relate to each
+// other after placement.
+type OrderGroupType string
+
+const (
+	// OrderGroupTypeBracket (BRK): a parent order with one or more child
+	// exits (typically a profit-target limit plus a stop-loss). When one
+	// child fills or cancels, the others are automatically canceled.
+	OrderGroupTypeBracket OrderGroupType = "BRK"
+	// OrderGroupTypeOCO (one-cancels-other): peer orders where any fill
+	// cancels the remaining orders in the group. No parent.
+	OrderGroupTypeOCO OrderGroupType = "OCO"
+	// OrderGroupTypeNormal: orders are submitted together but operate
+	// independently (not linked).
+	OrderGroupTypeNormal OrderGroupType = "NORMAL"
+)
 
 // Brokerage response wrappers — carry both data and partial per-account errors.
 
