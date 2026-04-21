@@ -494,3 +494,68 @@ func TestIntegration_StreamQuotes(t *testing.T) {
 		}
 	}
 }
+
+func TestIntegration_GetActivationTriggers(t *testing.T) {
+	c := integrationClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	triggers, err := c.OrderExecution().GetActivationTriggers(ctx)
+	if err != nil {
+		t.Fatalf("GetActivationTriggers: %v", err)
+	}
+	for _, at := range triggers {
+		t.Logf("trigger: %+v", at)
+	}
+	if len(triggers) == 0 {
+		t.Error("no triggers returned")
+	}
+}
+
+func TestIntegration_GetRoutes(t *testing.T) {
+	c := integrationClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	routes, err := c.OrderExecution().GetRoutes(ctx)
+	if err != nil {
+		t.Fatalf("GetRoutes: %v", err)
+	}
+	for _, r := range routes {
+		t.Logf("route: %+v", r)
+	}
+	if len(routes) == 0 {
+		t.Error("no routes returned")
+	}
+}
+
+func TestIntegration_PlaceOrderConfirm(t *testing.T) {
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req := OrderRequest{
+		AccountID:   ids[0],
+		Symbol:      "AAPL",
+		Quantity:    1,
+		OrderType:   OrderTypeLimit,
+		TradeAction: TradeActionBuy,
+		LimitPrice:  1, // far-below-market; preview only
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+	resp, err := c.OrderExecution().PlaceOrderConfirm(ctx, req)
+	if err != nil {
+		t.Fatalf("PlaceOrderConfirm: %v", err)
+	}
+	if len(resp.Confirmations) == 0 && len(resp.Errors) == 0 {
+		t.Error("empty confirmation response")
+	}
+	for _, c := range resp.Confirmations {
+		t.Logf("confirmation: %+v", c)
+	}
+	for _, e := range resp.Errors {
+		t.Logf("error: %+v", e)
+	}
+}
