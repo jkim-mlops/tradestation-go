@@ -125,3 +125,13 @@ func (s *OrderService) GetActivationTriggers(ctx context.Context) ([]ActivationT
 	}
 	return resp.ActivationTriggers, nil
 }
+
+func (s *OrderService) GetRoutes(ctx context.Context) ([]OrderRoute, error) {
+	var resp struct {
+		Routes []OrderRoute `json:"Routes"`
+	}
+	if err := s.client.doJSON(ctx, "GET", "/v3/orderexecution/routes", nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Routes, nil
+}

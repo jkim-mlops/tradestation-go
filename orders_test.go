@@ -252,3 +252,29 @@ func TestGetActivationTriggers(t *testing.T) {
 		t.Errorf("decoded wrong: %+v", triggers)
 	}
 }
+
+func TestGetRoutes(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"Routes":[
+            {"Id":"Intelligent","Name":"Intelligent","AssetTypes":["STOCK","STOCKOPTION"]},
+            {"Id":"NYSE","Name":"NYSE","AssetTypes":["STOCK"]}
+        ]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	routes, err := c.OrderExecution().GetRoutes(context.Background())
+	if err != nil {
+		t.Fatalf("GetRoutes: %v", err)
+	}
+	if gotPath != "/v3/orderexecution/routes" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(routes) != 2 || routes[0].ID != "Intelligent" {
+		t.Errorf("decoded wrong: %+v", routes)
+	}
+}
