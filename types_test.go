@@ -139,3 +139,48 @@ func TestTimeInForce_GTDRoundtrip(t *testing.T) {
 		t.Errorf("roundtrip lost data: %+v", got)
 	}
 }
+
+func TestPlaceOrderResponse_JSONDecode(t *testing.T) {
+	raw := `{
+        "Orders":[{"OrderID":"1184080","Message":"Order placed"}],
+        "Errors":[{"OrderNumber":"0","Error":"InsufficientBuyingPower","Message":"not enough buying power"}]
+    }`
+	var resp PlaceOrderResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(resp.Orders) != 1 || resp.Orders[0].OrderID != "1184080" {
+		t.Errorf("orders wrong: %+v", resp.Orders)
+	}
+	if len(resp.Errors) != 1 || resp.Errors[0].ErrorCode != "InsufficientBuyingPower" {
+		t.Errorf("errors wrong: %+v", resp.Errors)
+	}
+}
+
+func TestConfirmationResponse_JSONDecode(t *testing.T) {
+	raw := `{
+        "Confirmations":[{"OrderConfirmID":"abc","Route":"Intelligent","Duration":"DAY","Account":"123","SummaryMessage":"ok","EstimatedCommission":"0","EstimatedPrice":"150","EstimatedCost":"1500","DebitCreditEstimatedCost":"-1500"}]
+    }`
+	var resp ConfirmationResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(resp.Confirmations) != 1 {
+		t.Fatalf("confirmations = %d, want 1", len(resp.Confirmations))
+	}
+	c := resp.Confirmations[0]
+	if c.OrderConfirmID != "abc" || c.EstimatedPrice != 150 {
+		t.Errorf("decoded wrong: %+v", c)
+	}
+}
+
+func TestActivationTrigger_JSONDecode(t *testing.T) {
+	raw := `{"Key":"STT","Name":"Single Trade Tick","Description":"trigger on one tick"}`
+	var at ActivationTrigger
+	if err := json.Unmarshal([]byte(raw), &at); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if at.Key != "STT" || at.Name == "" || at.Description == "" {
+		t.Errorf("decoded wrong: %+v", at)
+	}
+}

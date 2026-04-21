@@ -555,3 +555,66 @@ type OrdersResponse struct {
 	Orders []Order        `json:"Orders"`
 	Errors []AccountError `json:"Errors,omitempty"`
 }
+
+// PlaceOrderResponse is the response body of PlaceOrder / PlaceOrderGroup.
+// Orders contains successfully placed orders; Errors contains per-order
+// rejections. A 200 response may carry both.
+type PlaceOrderResponse struct {
+	Orders []PlacedOrder `json:"Orders"`
+	Errors []OrderError  `json:"Errors,omitempty"`
+}
+
+// PlacedOrder is the thin confirmation returned by the server for each
+// successfully placed order. Use Brokerage.GetOrdersByID to fetch the full
+// Order payload.
+type PlacedOrder struct {
+	OrderID string `json:"OrderID"`
+	Message string `json:"Message"`
+}
+
+// OrderError is a per-order rejection inside a placement response.
+type OrderError struct {
+	// OrderNumber is the index into the request's Orders array (or "0" for
+	// single-order placements).
+	OrderNumber string `json:"OrderNumber"`
+	// ErrorCode is the machine-readable error category (e.g.
+	// "InsufficientBuyingPower"). Named ErrorCode in Go to avoid collision
+	// with the error interface method.
+	ErrorCode string `json:"Error"`
+	Message   string `json:"Message"`
+}
+
+// ConfirmationResponse is the response body of PlaceOrderConfirm /
+// PlaceOrderGroupConfirm — previews without execution.
+type ConfirmationResponse struct {
+	Confirmations []OrderConfirmation `json:"Confirmations"`
+	Errors        []OrderError        `json:"Errors,omitempty"`
+}
+
+// OrderConfirmation previews an order. Pass OrderConfirmID on a subsequent
+// PlaceOrder to submit the previewed order for execution.
+type OrderConfirmation struct {
+	OrderConfirmID           string        `json:"OrderConfirmID"`
+	Route                    string        `json:"Route"`
+	Duration                 string        `json:"Duration"`
+	Account                  string        `json:"Account"`
+	SummaryMessage           string        `json:"SummaryMessage"`
+	EstimatedCommission      StringFloat64 `json:"EstimatedCommission"`
+	EstimatedPrice           StringFloat64 `json:"EstimatedPrice"`
+	EstimatedPriceDisplay    string        `json:"EstimatedPriceDisplay"`
+	EstimatedCost            StringFloat64 `json:"EstimatedCost"`
+	EstimatedCostDisplay     string        `json:"EstimatedCostDisplay"`
+	DebitCreditEstimatedCost StringFloat64 `json:"DebitCreditEstimatedCost"`
+	InitialMarginDisplay     string        `json:"InitialMarginDisplay"`
+	ProductCurrency          string        `json:"ProductCurrency"`
+	AccountCurrency          string        `json:"AccountCurrency"`
+}
+
+// ActivationTrigger describes a valid activation-trigger identifier for
+// stop / trigger orders. Retrieved via GetActivationTriggers. Use the Key
+// in OrderRequest.AdvancedOptions.
+type ActivationTrigger struct {
+	Key         string `json:"Key"` // e.g. "STT", "DTT", "SBA"
+	Name        string `json:"Name"`
+	Description string `json:"Description"`
+}
