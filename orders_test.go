@@ -466,3 +466,43 @@ func TestReplaceOrder_ValidationBeforeHTTP(t *testing.T) {
 		t.Error("want validation error for empty mods")
 	}
 }
+
+func TestPlaceOrderGroup_RequestShape(t *testing.T) {
+	var gotPath string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"Orders":[{"OrderID":"A","Message":"ok"},{"OrderID":"B","Message":"ok"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(Test, "id", "secret", "refresh")
+	c.apiBase = srv.URL
+
+	group := OrderGroupRequest{
+		Type:   OrderGroupTypeOCO,
+		Orders: []OrderRequest{validOrder(), validOrder()},
+	}
+	resp, err := c.OrderExecution().PlaceOrderGroup(context.Background(), group)
+	if err != nil {
+		t.Fatalf("PlaceOrderGroup: %v", err)
+	}
+	if gotPath != "/v3/orderexecution/ordergroups" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !strings.Contains(string(gotBody), `"Type":"OCO"`) {
+		t.Errorf("body missing Type: %s", string(gotBody))
+	}
+	if len(resp.Orders) != 2 {
+		t.Errorf("orders = %d, want 2", len(resp.Orders))
+	}
+}
+
+func TestPlaceOrderGroup_ValidationBeforeHTTP(t *testing.T) {
+	c := NewClient(Test, "id", "secret", "refresh")
+	bad := OrderGroupRequest{Type: OrderGroupTypeOCO, Orders: []OrderRequest{validOrder()}}
+	if _, err := c.OrderExecution().PlaceOrderGroup(context.Background(), bad); err == nil {
+		t.Error("want validation error")
+	}
+}

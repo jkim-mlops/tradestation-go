@@ -181,3 +181,14 @@ func (s *OrderService) ReplaceOrder(ctx context.Context, orderID string, req Rep
 	}
 	return &out, nil
 }
+
+func (s *OrderService) PlaceOrderGroup(ctx context.Context, req OrderGroupRequest) (*PlaceOrderResponse, error) {
+	if err := validateOrderGroupRequest(&req); err != nil {
+		return nil, err
+	}
+	var out PlaceOrderResponse
+	if err := s.client.doJSON(ctx, "POST", "/v3/orderexecution/ordergroups", nil, &req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
