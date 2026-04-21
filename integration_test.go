@@ -662,3 +662,128 @@ func TestIntegration_PlaceAndReplaceAndCancel(t *testing.T) {
 	}
 	t.Logf("replaced: %+v", replaced)
 }
+
+func TestIntegration_PlaceAndCancelOCOGroup(t *testing.T) {
+	requireOrderPlacementOptIn(t)
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	legA := OrderRequest{
+		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
+		OrderType: OrderTypeLimit, TradeAction: TradeActionBuy,
+		LimitPrice:  1, // won't fill
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+	legB := legA
+	legB.LimitPrice = 2 // also won't fill; different price so distinguishable
+
+	group := OrderGroupRequest{Type: OrderGroupTypeOCO, Orders: []OrderRequest{legA, legB}}
+	resp, err := c.OrderExecution().PlaceOrderGroup(ctx, group)
+	if err != nil {
+		t.Fatalf("PlaceOrderGroup: %v", err)
+	}
+	t.Logf("placed: %+v, errors: %+v", resp.Orders, resp.Errors)
+	if len(resp.Orders) < 2 {
+		t.Fatalf("expected 2 orders, got %d (errors: %+v)", len(resp.Orders), resp.Errors)
+	}
+
+	defer func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		for _, o := range resp.Orders {
+			if err := c.OrderExecution().CancelOrder(cctx, o.OrderID); err != nil {
+				t.Logf("cancel cleanup failed for %s: %v", o.OrderID, err)
+			}
+		}
+	}()
+
+	// Verify both visible in GetOrders.
+	orders, err := c.Brokerage().GetOrders(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	seen := make(map[string]bool)
+	for _, o := range orders.Orders {
+		for _, placed := range resp.Orders {
+			if o.OrderID == placed.OrderID {
+				seen[o.OrderID] = true
+				t.Logf("found order: %+v", o)
+			}
+		}
+	}
+	if len(seen) != len(resp.Orders) {
+		t.Errorf("saw %d of %d placed orders in GetOrders", len(seen), len(resp.Orders))
+	}
+}
+
+func TestIntegration_PlaceAndCancelBracketGroup(t *testing.T) {
+	requireOrderPlacementOptIn(t)
+	c := integrationClient(t)
+	ids := fetchSandboxAccountIDs(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	parent := OrderRequest{
+		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
+		OrderType: OrderTypeLimit, TradeAction: TradeActionBuy,
+		LimitPrice:  1, // won't fill
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+	profit := OrderRequest{
+		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
+		OrderType: OrderTypeLimit, TradeAction: TradeActionSell,
+		LimitPrice:  500, // unreachable profit target
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+	stop := OrderRequest{
+		AccountID: ids[0], Symbol: "AAPL", Quantity: 1,
+		OrderType: OrderTypeStopMarket, TradeAction: TradeActionSell,
+		StopPrice:   0.5, // unreachable stop
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+
+	group := OrderGroupRequest{
+		Type:   OrderGroupTypeBracket,
+		Orders: []OrderRequest{parent, profit, stop},
+	}
+	resp, err := c.OrderExecution().PlaceOrderGroup(ctx, group)
+	if err != nil {
+		t.Fatalf("PlaceOrderGroup: %v", err)
+	}
+	t.Logf("placed: %+v, errors: %+v", resp.Orders, resp.Errors)
+	if len(resp.Orders) < 3 {
+		t.Fatalf("expected 3 orders, got %d (errors: %+v)", len(resp.Orders), resp.Errors)
+	}
+
+	defer func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		for _, o := range resp.Orders {
+			if err := c.OrderExecution().CancelOrder(cctx, o.OrderID); err != nil {
+				t.Logf("cancel cleanup failed for %s: %v", o.OrderID, err)
+			}
+		}
+	}()
+
+	// Verify all three visible in GetOrders.
+	orders, err := c.Brokerage().GetOrders(ctx, ids)
+	if err != nil {
+		t.Fatalf("GetOrders: %v", err)
+	}
+	seen := make(map[string]bool)
+	for _, o := range orders.Orders {
+		for _, placed := range resp.Orders {
+			if o.OrderID == placed.OrderID {
+				seen[o.OrderID] = true
+				t.Logf("found order: %+v", o)
+			}
+		}
+	}
+	if len(seen) != len(resp.Orders) {
+		t.Errorf("saw %d of %d placed orders in GetOrders", len(seen), len(resp.Orders))
+	}
+}
