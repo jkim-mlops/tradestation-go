@@ -1,0 +1,221 @@
+package tradestation
+
+import (
+	"testing"
+)
+
+func validOrder() OrderRequest {
+	return OrderRequest{
+		AccountID:   "123",
+		Symbol:      "AAPL",
+		Quantity:    10,
+		OrderType:   OrderTypeLimit,
+		TradeAction: TradeActionBuy,
+		LimitPrice:  150,
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+}
+
+func TestValidateOrderRequest_HappyPath(t *testing.T) {
+	req := validOrder()
+	if err := validateOrderRequest(&req); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateOrderRequest_RequiresAccountID(t *testing.T) {
+	req := validOrder()
+	req.AccountID = ""
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for empty AccountID")
+	}
+}
+
+func TestValidateOrderRequest_RequiresSymbol(t *testing.T) {
+	req := validOrder()
+	req.Symbol = ""
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for empty Symbol")
+	}
+}
+
+func TestValidateOrderRequest_RequiresPositiveQuantity(t *testing.T) {
+	req := validOrder()
+	req.Quantity = 0
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for zero Quantity")
+	}
+	req.Quantity = -1
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for negative Quantity")
+	}
+}
+
+func TestValidateOrderRequest_RequiresOrderType(t *testing.T) {
+	req := validOrder()
+	req.OrderType = ""
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for empty OrderType")
+	}
+}
+
+func TestValidateOrderRequest_RequiresTradeAction(t *testing.T) {
+	req := validOrder()
+	req.TradeAction = ""
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for empty TradeAction")
+	}
+}
+
+func TestValidateOrderRequest_RequiresDuration(t *testing.T) {
+	req := validOrder()
+	req.TimeInForce.Duration = ""
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for empty Duration")
+	}
+}
+
+func TestValidateOrderRequest_GTDRequiresExpirationDate(t *testing.T) {
+	req := validOrder()
+	req.TimeInForce = TimeInForce{Duration: DurationGTD}
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for GTD without ExpirationDate")
+	}
+}
+
+func TestValidateOrderRequest_MarketRejectsPrices(t *testing.T) {
+	req := validOrder()
+	req.OrderType = OrderTypeMarket
+	req.LimitPrice = 150
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for Market with LimitPrice")
+	}
+
+	req = validOrder()
+	req.OrderType = OrderTypeMarket
+	req.LimitPrice = 0
+	req.StopPrice = 150
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for Market with StopPrice")
+	}
+}
+
+func TestValidateOrderRequest_LimitRequiresLimitPrice(t *testing.T) {
+	req := validOrder()
+	req.OrderType = OrderTypeLimit
+	req.LimitPrice = 0
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for Limit without LimitPrice")
+	}
+}
+
+func TestValidateOrderRequest_LimitRejectsStopPrice(t *testing.T) {
+	req := validOrder()
+	req.OrderType = OrderTypeLimit
+	req.LimitPrice = 150
+	req.StopPrice = 140
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for Limit with StopPrice")
+	}
+}
+
+func TestValidateOrderRequest_StopMarketRequiresStopPrice(t *testing.T) {
+	req := validOrder()
+	req.OrderType = OrderTypeStopMarket
+	req.LimitPrice = 0
+	req.StopPrice = 0
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for StopMarket without StopPrice")
+	}
+}
+
+func TestValidateOrderRequest_StopLimitRequiresBoth(t *testing.T) {
+	req := validOrder()
+	req.OrderType = OrderTypeStopLimit
+	req.LimitPrice = 150
+	req.StopPrice = 0
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for StopLimit without StopPrice")
+	}
+	req.LimitPrice = 0
+	req.StopPrice = 140
+	if err := validateOrderRequest(&req); err == nil {
+		t.Error("want error for StopLimit without LimitPrice")
+	}
+}
+
+func TestValidateOrderLegs_EmptySymbol(t *testing.T) {
+	legs := []OrderLegRequest{{Quantity: 1, TradeAction: TradeActionBuyToOpen}}
+	if err := validateOrderLegs(legs); err == nil {
+		t.Error("want error for missing Symbol")
+	}
+}
+
+func TestValidateOrderLegs_NonPositiveQuantity(t *testing.T) {
+	legs := []OrderLegRequest{{Symbol: "X", Quantity: 0, TradeAction: TradeActionBuyToOpen}}
+	if err := validateOrderLegs(legs); err == nil {
+		t.Error("want error for zero Quantity")
+	}
+}
+
+func TestValidateOrderLegs_MissingTradeAction(t *testing.T) {
+	legs := []OrderLegRequest{{Symbol: "X", Quantity: 1}}
+	if err := validateOrderLegs(legs); err == nil {
+		t.Error("want error for missing TradeAction")
+	}
+}
+
+func TestValidateOrderGroupRequest_RequiresType(t *testing.T) {
+	g := OrderGroupRequest{Orders: []OrderRequest{validOrder(), validOrder()}}
+	if err := validateOrderGroupRequest(&g); err == nil {
+		t.Error("want error for empty Type")
+	}
+}
+
+func TestValidateOrderGroupRequest_RequiresTwoOrders(t *testing.T) {
+	g := OrderGroupRequest{Type: OrderGroupTypeOCO, Orders: []OrderRequest{validOrder()}}
+	if err := validateOrderGroupRequest(&g); err == nil {
+		t.Error("want error for single-order group")
+	}
+}
+
+func TestValidateOrderGroupRequest_PropagatesPerOrderErrors(t *testing.T) {
+	bad := validOrder()
+	bad.Symbol = ""
+	g := OrderGroupRequest{Type: OrderGroupTypeOCO, Orders: []OrderRequest{validOrder(), bad}}
+	if err := validateOrderGroupRequest(&g); err == nil {
+		t.Error("want error from per-order validation")
+	}
+}
+
+func TestValidateReplaceOrderRequest_RequiresModification(t *testing.T) {
+	if err := validateReplaceOrderRequest(&ReplaceOrderRequest{}); err == nil {
+		t.Error("want error for empty modifications")
+	}
+}
+
+func TestValidateReplaceOrderRequest_RejectsNegatives(t *testing.T) {
+	if err := validateReplaceOrderRequest(&ReplaceOrderRequest{Quantity: -1}); err == nil {
+		t.Error("want error for negative Quantity")
+	}
+	if err := validateReplaceOrderRequest(&ReplaceOrderRequest{LimitPrice: -1}); err == nil {
+		t.Error("want error for negative LimitPrice")
+	}
+	if err := validateReplaceOrderRequest(&ReplaceOrderRequest{StopPrice: -1}); err == nil {
+		t.Error("want error for negative StopPrice")
+	}
+}
+
+func TestValidateReplaceOrderRequest_GTDRequiresExpirationDate(t *testing.T) {
+	req := ReplaceOrderRequest{TimeInForce: &TimeInForce{Duration: DurationGTD}}
+	if err := validateReplaceOrderRequest(&req); err == nil {
+		t.Error("want error for GTD without ExpirationDate")
+	}
+}
+
+func TestValidateReplaceOrderRequest_AcceptsValidModification(t *testing.T) {
+	req := ReplaceOrderRequest{Quantity: 10}
+	if err := validateReplaceOrderRequest(&req); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
