@@ -223,6 +223,30 @@ func fetchSandboxAccountIDs(t *testing.T, c *Client) []string {
 	return ids
 }
 
+// fetchSandboxEquityAccountIDs returns only accounts capable of equity orders
+// (AccountType Margin or Cash). Futures accounts can't accept AAPL/SPY orders
+// and will fail with "Invalid account for the asset type".
+func fetchSandboxEquityAccountIDs(t *testing.T, c *Client) []string {
+	t.Helper()
+	svc := &BrokerageService{client: c}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	accounts, err := svc.GetAccounts(ctx)
+	if err != nil {
+		t.Fatalf("fetch accounts: %v", err)
+	}
+	ids := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		if a.AccountType == "Margin" || a.AccountType == "Cash" {
+			ids = append(ids, a.AccountID)
+		}
+	}
+	if len(ids) == 0 {
+		t.Skip("no equity (Margin/Cash) accounts on sandbox — skipping dependent tests")
+	}
+	return ids
+}
+
 func TestIntegration_GetBalances(t *testing.T) {
 	c := integrationClient(t)
 	ids := fetchSandboxAccountIDs(t, c)
@@ -531,7 +555,7 @@ func TestIntegration_GetRoutes(t *testing.T) {
 
 func TestIntegration_PlaceOrderConfirm(t *testing.T) {
 	c := integrationClient(t)
-	ids := fetchSandboxAccountIDs(t, c)
+	ids := fetchSandboxEquityAccountIDs(t, c)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -571,7 +595,7 @@ func requireOrderPlacementOptIn(t *testing.T) {
 func TestIntegration_PlaceAndCancelOrder(t *testing.T) {
 	requireOrderPlacementOptIn(t)
 	c := integrationClient(t)
-	ids := fetchSandboxAccountIDs(t, c)
+	ids := fetchSandboxEquityAccountIDs(t, c)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -625,7 +649,7 @@ func TestIntegration_PlaceAndCancelOrder(t *testing.T) {
 func TestIntegration_PlaceAndReplaceAndCancel(t *testing.T) {
 	requireOrderPlacementOptIn(t)
 	c := integrationClient(t)
-	ids := fetchSandboxAccountIDs(t, c)
+	ids := fetchSandboxEquityAccountIDs(t, c)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -666,7 +690,7 @@ func TestIntegration_PlaceAndReplaceAndCancel(t *testing.T) {
 func TestIntegration_PlaceAndCancelOCOGroup(t *testing.T) {
 	requireOrderPlacementOptIn(t)
 	c := integrationClient(t)
-	ids := fetchSandboxAccountIDs(t, c)
+	ids := fetchSandboxEquityAccountIDs(t, c)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -722,7 +746,7 @@ func TestIntegration_PlaceAndCancelOCOGroup(t *testing.T) {
 func TestIntegration_PlaceAndCancelBracketGroup(t *testing.T) {
 	requireOrderPlacementOptIn(t)
 	c := integrationClient(t)
-	ids := fetchSandboxAccountIDs(t, c)
+	ids := fetchSandboxEquityAccountIDs(t, c)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
