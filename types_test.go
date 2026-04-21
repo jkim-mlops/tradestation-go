@@ -2,6 +2,7 @@ package tradestation
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +85,57 @@ func TestOrderType_JSONRoundtrip(t *testing.T) {
 	}
 	if got != orig {
 		t.Errorf("Unmarshal got %q, want %q", got, orig)
+	}
+}
+
+func TestOrderRequest_MarshalEncodesNumericsAsStrings(t *testing.T) {
+	req := OrderRequest{
+		AccountID:   "123",
+		Symbol:      "AAPL",
+		Quantity:    10,
+		OrderType:   OrderTypeLimit,
+		TradeAction: TradeActionBuy,
+		LimitPrice:  150.5,
+		TimeInForce: TimeInForce{Duration: DurationDay},
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	got := string(b)
+	// Quantity and LimitPrice should both be JSON strings.
+	for _, substr := range []string{
+		`"Quantity":"10"`,
+		`"LimitPrice":"150.5"`,
+		`"OrderType":"Limit"`,
+		`"TradeAction":"BUY"`,
+		`"TimeInForce":{"Duration":"DAY"}`,
+	} {
+		if !strings.Contains(got, substr) {
+			t.Errorf("missing %q in %s", substr, got)
+		}
+	}
+	// StopPrice was zero — should be omitted.
+	if strings.Contains(got, "StopPrice") {
+		t.Errorf("StopPrice should be omitted: %s", got)
+	}
+}
+
+func TestTimeInForce_GTDRoundtrip(t *testing.T) {
+	tif := TimeInForce{Duration: DurationGTD, ExpirationDate: "2026-12-31"}
+	b, err := json.Marshal(tif)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	want := `{"Duration":"GTD","ExpirationDate":"2026-12-31"}`
+	if string(b) != want {
+		t.Errorf("got %s, want %s", string(b), want)
+	}
+	var got TimeInForce
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.Duration != DurationGTD || got.ExpirationDate != "2026-12-31" {
+		t.Errorf("roundtrip lost data: %+v", got)
 	}
 }

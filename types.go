@@ -316,17 +316,115 @@ type ConditionalOrder struct {
 	Relationship string `json:"Relationship"`
 }
 
-// OrderRequest stays as-is (used by OrderService stubs, out of scope for this branch).
+// OrderRequest is the body of POST /orderexecution/orders and POST /orderconfirm.
+// Required fields: AccountID, Symbol, Quantity, OrderType, TradeAction,
+// TimeInForce.Duration. OrderType determines which price fields must be set.
 type OrderRequest struct {
-	AccountID   string  `json:"AccountID"`
-	Symbol      string  `json:"Symbol"`
-	Quantity    int64   `json:"Quantity"`
-	OrderType   string  `json:"OrderType"`
-	LimitPrice  float64 `json:"LimitPrice,omitempty"`
-	StopPrice   float64 `json:"StopPrice,omitempty"`
-	TradeAction string  `json:"TradeAction"`
-	Duration    string  `json:"Duration"`
-	Route       string  `json:"Route,omitempty"`
+	// AccountID is the TradeStation account ID the order is placed against.
+	AccountID string `json:"AccountID"`
+
+	// Symbol is the security identifier (e.g. "AAPL" for stock, option
+	// symbols follow TradeStation's symbology format).
+	Symbol string `json:"Symbol"`
+
+	// Quantity is the number of shares or contracts. Must be positive.
+	// Supports fractional values for assets that permit them.
+	Quantity StringFloat64 `json:"Quantity"`
+
+	// OrderType — see OrderType constants for price-field requirements.
+	OrderType OrderType `json:"OrderType"`
+
+	// TradeAction — see TradeAction constants for equity vs option semantics.
+	TradeAction TradeAction `json:"TradeAction"`
+
+	// LimitPrice is required for OrderTypeLimit and OrderTypeStopLimit;
+	// must not be set for Market or StopMarket.
+	LimitPrice StringFloat64 `json:"LimitPrice,omitempty"`
+
+	// StopPrice is required for OrderTypeStopMarket and OrderTypeStopLimit;
+	// must not be set for Market or Limit.
+	StopPrice StringFloat64 `json:"StopPrice,omitempty"`
+
+	// TimeInForce controls how long the order remains active. Duration is
+	// required; ExpirationDate is required when Duration=DurationGTD.
+	TimeInForce TimeInForce `json:"TimeInForce"`
+
+	// Route is the execution venue ID. Use OrderService.GetRoutes to list
+	// valid routes. Optional — server picks a default when unset.
+	Route string `json:"Route,omitempty"`
+
+	// BuyingPowerWarning controls buying-power-exceeded handling, typically
+	// "Enforce" (default) or "Preconfirmed".
+	BuyingPowerWarning string `json:"BuyingPowerWarning,omitempty"`
+
+	// AdvancedOptions is an opaque string for advanced order features
+	// (trailing stops, activation triggers, all-or-none, etc.). See spec.
+	AdvancedOptions string `json:"AdvancedOptions,omitempty"`
+
+	// OrderConfirmID references a prior PlaceOrderConfirm response,
+	// binding placement to a previewed order for safety.
+	OrderConfirmID string `json:"OrderConfirmID,omitempty"`
+
+	// Legs populates multi-leg (option spread) orders. Must use option
+	// TradeActions (BUYTOOPEN / SELLTOOPEN / BUYTOCLOSE / SELLTOCLOSE).
+	Legs []OrderLegRequest `json:"Legs,omitempty"`
+
+	// OSOs (order-sends-order) fire child order groups only if this parent
+	// order fills. Nested OSOs are allowed.
+	OSOs []OSOOrderRequest `json:"OSOs,omitempty"`
+}
+
+// TimeInForce controls how long an order remains active before
+// automatic cancellation.
+type TimeInForce struct {
+	// Duration is required; see Duration constants for semantics.
+	Duration Duration `json:"Duration"`
+	// ExpirationDate is an ISO8601 date (e.g. "2026-12-31"). Required when
+	// Duration is DurationGTD; ignored for other durations.
+	ExpirationDate string `json:"ExpirationDate,omitempty"`
+}
+
+// OrderLegRequest describes one leg of a multi-leg option order.
+// TradeAction must be an option-variant action.
+type OrderLegRequest struct {
+	Symbol         string        `json:"Symbol"`
+	Quantity       StringFloat64 `json:"Quantity"`
+	TradeAction    TradeAction   `json:"TradeAction"`
+	AssetType      string        `json:"AssetType,omitempty"`
+	ExpirationDate string        `json:"ExpirationDate,omitempty"` // option expiration
+	StrikePrice    StringFloat64 `json:"StrikePrice,omitempty"`
+	OptionType     string        `json:"OptionType,omitempty"` // CALL | PUT
+}
+
+// OSOOrderRequest (order-sends-order) describes a child order group that
+// activates only when the parent order fills. The child group itself has a
+// Type (bracket, OCO, or normal) and contains 1+ orders. Chaining is allowed
+// via OrderRequest.OSOs on the child orders.
+type OSOOrderRequest struct {
+	Type   OrderGroupType `json:"Type"`
+	Orders []OrderRequest `json:"Orders"`
+}
+
+// ReplaceOrderRequest is the body of PUT /orders/{orderID}. Contains only
+// fields the spec allows to modify on an open order. All fields are optional;
+// at least one must be set or the request is rejected at the validation
+// boundary.
+type ReplaceOrderRequest struct {
+	Quantity        StringFloat64 `json:"Quantity,omitempty"`
+	LimitPrice      StringFloat64 `json:"LimitPrice,omitempty"`
+	StopPrice       StringFloat64 `json:"StopPrice,omitempty"`
+	TimeInForce     *TimeInForce  `json:"TimeInForce,omitempty"`
+	AdvancedOptions string        `json:"AdvancedOptions,omitempty"`
+}
+
+// OrderGroupRequest is the body of POST /ordergroups and POST /ordergroupsconfirm.
+// Must contain at least 2 orders.
+type OrderGroupRequest struct {
+	// Type determines how the Orders relate after placement.
+	// See OrderGroupType constants.
+	Type OrderGroupType `json:"Type"`
+	// Orders is the list of orders in the group (2+ required).
+	Orders []OrderRequest `json:"Orders"`
 }
 
 // OrderType is the execution style for an order. Different OrderTypes require
