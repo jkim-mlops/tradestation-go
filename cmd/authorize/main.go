@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -17,43 +19,70 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
 const (
-	authorizeURL      = "https://signin.tradestation.com/authorize"
-	tokenURL          = "https://signin.tradestation.com/oauth/token"
-	audience          = "https://api.tradestation.com"
-	defaultRedirect   = "http://localhost:8080"
-	defaultScopes     = "openid offline_access MarketData ReadAccount Trade profile"
-	defaultRefreshSSM = "/tradestation/refresh-token"
+	authorizeURL    = "https://signin.tradestation.com/authorize"
+	tokenURL        = "https://signin.tradestation.com/oauth/token"
+	audience        = "https://api.tradestation.com"
+	defaultRedirect = "http://localhost:8080"
+	defaultScopes   = "openid offline_access MarketData ReadAccount Trade profile"
 )
 
+//go:embed tradestation.svg
+var logoSVG string
+
+// completionPage is shown in the browser once the OAuth callback lands. The
+// %s is replaced with the inline TradeStation logo.
+const completionPage = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TradeStation authorization complete</title>
+<style>
+  html, body { height: 100%%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background: #262626;
+    color: rgba(255, 255, 255, 0.85);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    text-align: center;
+  }
+  .logo { width: 300px; max-width: 70vw; margin-bottom: 2rem; }
+  .logo svg { width: 100%%; height: auto; display: block; }
+  h1 { font-weight: 500; font-size: 1.4rem; margin: 0 0 0.5rem; }
+  p { font-weight: 300; font-size: 1rem; color: rgba(255, 255, 255, 0.6); margin: 0; }
+</style>
+</head>
+<body>
+  <div class="logo">%s</div>
+  <h1>Authorization complete</h1>
+  <p>You can close this tab.</p>
+  <script>
+    // Strip the code/state query params from the address bar and history so
+    // the authorization code doesn't linger after it's been exchanged.
+    history.replaceState(null, "", location.pathname);
+  </script>
+</body>
+</html>`
+
 func main() {
-	idParam := flag.String("id", "/tradestation/client-id", "SSM parameter name for client ID")
-	secretParam := flag.String("secret", "/tradestation/client-secret", "SSM parameter name for client secret")
-	refreshParam := flag.String("refresh", defaultRefreshSSM, "SSM parameter name to write refresh token to")
+	idFlag := flag.String("id", "", "OAuth client ID (overrides TRADESTATION_CLIENT_ID)")
+	secretFlag := flag.String("secret", "", "OAuth client secret (overrides TRADESTATION_CLIENT_SECRET)")
 	scopes := flag.String("scopes", defaultScopes, "OAuth scopes (space-separated)")
+	envFile := flag.String("env", ".env", "path to .env file (values take precedence over the OS environment)")
 	flag.Parse()
 
-	profile := os.Getenv("AWS_PROFILE")
-	if profile == "" {
-		profile = "joe-prod"
-	}
+	loadDotenv(*envFile)
+
+	clientID := credential("client ID", *idFlag, "TRADESTATION_CLIENT_ID")
+	clientSecret := credential("client secret", *secretFlag, "TRADESTATION_CLIENT_SECRET")
 
 	ctx := context.Background()
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithSharedConfigProfile(profile))
-	if err != nil {
-		log.Fatalf("load aws config (profile=%s): %v", profile, err)
-	}
-	ssmClient := ssm.NewFromConfig(cfg)
-
-	clientID := mustReadSSM(ctx, ssmClient, *idParam)
-	clientSecret := mustReadSSM(ctx, ssmClient, *secretParam)
 
 	state := randomState()
 	codeCh := make(chan string, 1)
@@ -91,7 +120,8 @@ func main() {
 			errCh <- err
 			return
 		}
-		fmt.Fprintln(w, "<html><body><h2>TradeStation authorization complete.</h2><p>You can close this tab.</p></body></html>")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, completionPage, logoSVG)
 		codeCh <- code
 	})
 
@@ -136,31 +166,48 @@ func main() {
 		log.Fatalf("no refresh_token in response — did you include the 'offline_access' scope?")
 	}
 
-	writeSSM(ctx, ssmClient, *refreshParam, tokenResp.RefreshToken)
-	fmt.Printf("Wrote refresh token to SSM parameter %s\n", *refreshParam)
+	fmt.Println()
+	fmt.Println("Refresh token (store this securely, e.g. TRADESTATION_REFRESH_TOKEN):")
+	fmt.Println(tokenResp.RefreshToken)
 }
 
-func mustReadSSM(ctx context.Context, c *ssm.Client, name string) string {
-	out, err := c.GetParameter(ctx, &ssm.GetParameterInput{
-		Name:           aws.String(name),
-		WithDecryption: aws.Bool(true),
-	})
+// loadDotenv reads KEY=VALUE lines from path into the process environment.
+// Values in the file take precedence over any already-set variables. A missing
+// file is not an error — the secrets may already be exported.
+func loadDotenv(path string) {
+	f, err := os.Open(path)
 	if err != nil {
-		log.Fatalf("read %s: %v", name, err)
+		return
 	}
-	return aws.ToString(out.Parameter.Value)
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		os.Setenv(key, val)
+	}
 }
 
-func writeSSM(ctx context.Context, c *ssm.Client, name, value string) {
-	_, err := c.PutParameter(ctx, &ssm.PutParameterInput{
-		Name:      aws.String(name),
-		Value:     aws.String(value),
-		Type:      ssmtypes.ParameterTypeSecureString,
-		Overwrite: aws.Bool(true),
-	})
-	if err != nil {
-		log.Fatalf("write %s: %v", name, err)
+// credential resolves a secret from the flag value, falling back to the named
+// environment variable. It exits if neither source provides a value.
+func credential(label, flagVal, envVar string) string {
+	if flagVal != "" {
+		return flagVal
 	}
+	if v := os.Getenv(envVar); v != "" {
+		return v
+	}
+	log.Fatalf("no %s: pass the flag or set %s", label, envVar)
+	return ""
 }
 
 type tokenResponse struct {

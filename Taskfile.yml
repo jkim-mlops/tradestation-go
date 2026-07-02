@@ -1,0 +1,16 @@
+version: '3'
+
+tasks:
+  env:
+    desc: Fetch TradeStation secrets from SSM into .env (requires AWS CLI + credentials).
+    vars:
+      PROFILE: '{{.AWS_PROFILE | default "joe-prod"}}'
+    cmds:
+      - |
+        ssm() { aws ssm get-parameter --profile "{{.PROFILE}}" --name "$1" --with-decryption --query Parameter.Value --output text; }
+        {
+          echo "TRADESTATION_CLIENT_ID=$(ssm /tradestation/client-id)"
+          echo "TRADESTATION_CLIENT_SECRET=$(ssm /tradestation/client-secret)"
+          echo "TRADESTATION_REFRESH_TOKEN=$(ssm /tradestation/refresh-token)"
+        } > .env
+        echo "wrote .env"
