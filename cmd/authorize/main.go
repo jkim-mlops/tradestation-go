@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -31,7 +32,10 @@ func main() {
 	idFlag := flag.String("id", "", "OAuth client ID (overrides TRADESTATION_CLIENT_ID)")
 	secretFlag := flag.String("secret", "", "OAuth client secret (overrides TRADESTATION_CLIENT_SECRET)")
 	scopes := flag.String("scopes", defaultScopes, "OAuth scopes (space-separated)")
+	envFile := flag.String("env", ".env", "path to .env file (values take precedence over the OS environment)")
 	flag.Parse()
+
+	loadDotenv(*envFile)
 
 	clientID := credential("client ID", *idFlag, "TRADESTATION_CLIENT_ID")
 	clientSecret := credential("client secret", *secretFlag, "TRADESTATION_CLIENT_SECRET")
@@ -122,6 +126,32 @@ func main() {
 	fmt.Println()
 	fmt.Println("Refresh token (store this securely, e.g. TRADESTATION_REFRESH_TOKEN):")
 	fmt.Println(tokenResp.RefreshToken)
+}
+
+// loadDotenv reads KEY=VALUE lines from path into the process environment.
+// Values in the file take precedence over any already-set variables. A missing
+// file is not an error — the secrets may already be exported.
+func loadDotenv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.Trim(strings.TrimSpace(val), `"'`)
+		os.Setenv(key, val)
+	}
 }
 
 // credential resolves a secret from the flag value, falling back to the named
