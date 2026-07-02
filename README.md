@@ -41,7 +41,7 @@ This repo ships a small CLI, `cmd/authorize`, that runs a local callback server,
 go run ./cmd/authorize
 ```
 
-It reads the client ID and secret from `TRADESTATION_CLIENT_ID` / `TRADESTATION_CLIENT_SECRET` (or a local `.env`). Copy the printed refresh token to wherever you keep secrets (e.g. `TRADESTATION_REFRESH_TOKEN` in `.env`). The tool is stdlib-only — no AWS SDK.
+It reads the client ID and secret from `TRADESTATION_CLIENT_ID` / `TRADESTATION_CLIENT_SECRET` (or a local `.env`). Copy the printed refresh token to wherever you keep secrets (e.g. `TRADESTATION_REFRESH_TOKEN` in `.env`). The tool is stdlib-only.
 
 Flags:
 
@@ -59,13 +59,11 @@ TRADESTATION_CLIENT_SECRET=...
 TRADESTATION_REFRESH_TOKEN=...
 ```
 
-If you keep these in AWS SSM, `task env` fetches them into `.env` via the AWS CLI (the Go module itself has no AWS dependency):
+Or run `task env` to populate `.env` from your secret store:
 
 ```
 task env
 ```
-
-Uses `AWS_PROFILE` if set, otherwise `joe-prod`.
 
 ## Quickstart
 
@@ -117,7 +115,7 @@ Both environments authenticate against the same `signin.tradestation.com` OAuth 
 c := tradestation.NewClient(env, id, secret, refresh,
     tradestation.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}),
     tradestation.WithRefreshTokenRotate(func(newToken string) {
-        // Persist the rotated refresh token (e.g., back to SSM).
+        // Persist the rotated refresh token (e.g., to your secret store).
     }),
 )
 ```
@@ -255,7 +253,7 @@ go test -run TestName -v     # single test
 ## Project conventions
 
 - **`docs/` is gitignored** — design docs and plans are local-only.
-- **No operational dependencies in the module** — the root package and the `authorize` CLI are stdlib-only. Credential fetching from AWS SSM lives in the `Taskfile` (via the AWS CLI), never in Go.
+- **No operational dependencies in the module** — the root package and the `authorize` CLI are stdlib-only. Credential fetching lives in the `Taskfile`, never in Go.
 - **Commit style:** Conventional Commits + [gitmoji](https://gitmoji.dev/), lowercase: `type(scope): :emoji: short description`.
 - **Branching:** feature work happens on `feat/<name>` branches; never commit directly to `main`.
 
