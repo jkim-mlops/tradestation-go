@@ -14,7 +14,7 @@ Stdlib-only. Automatic access-token refresh on 401. Rotating-refresh-token suppo
 | Brokerage — all 8 REST endpoints | implemented |
 | Brokerage — Streaming | not started |
 | Order Execution (place / replace / cancel) | stubbed |
-| CLI tools (`authorize`, `envgen`) | implemented |
+| CLI tool (`authorize`) | implemented |
 
 ## Install
 
@@ -35,33 +35,37 @@ The library never touches the authorize step. It only holds the refresh token an
 
 ### Getting a refresh token (one-time)
 
-This repo ships a small CLI, `cmd/authorize`, that runs a local callback server, opens the browser to TradeStation's consent screen, completes the OAuth code exchange, and writes the resulting refresh token to AWS SSM Parameter Store:
+This repo ships a small CLI, `cmd/authorize`, that runs a local callback server, opens the browser to TradeStation's consent screen, completes the OAuth code exchange, and prints the resulting refresh token to stdout:
 
 ```
-go run ./cmd/authorize \
-  -id     /tradestation/client-id \
-  -secret /tradestation/client-secret \
-  -refresh /tradestation/refresh-token \
-  -scopes "openid offline_access MarketData ReadAccount Trade profile"
+go run ./cmd/authorize
 ```
 
-Reads client-id/secret from SSM, writes the refresh token back as a `SecureString`. Uses `AWS_PROFILE` if set, otherwise `joe-prod`.
+It reads the client ID and secret from `TRADESTATION_CLIENT_ID` / `TRADESTATION_CLIENT_SECRET` (or a local `.env`). Copy the printed refresh token to wherever you keep secrets (e.g. `TRADESTATION_REFRESH_TOKEN` in `.env`). The tool is stdlib-only — no AWS SDK.
 
-### Local `.env` for integration tests
+Flags:
 
-`cmd/envgen` pulls the three SSM parameters into a `.env` file used by `go test -tags=integration`:
+- `-id`, `-secret` — override the env-var credentials.
+- `-scopes` — OAuth scopes (default includes `offline_access`, required to receive a refresh token).
+- `-env` — path to the `.env` file to load (default `.env`).
 
-```
-go run ./cmd/envgen -out .env
-```
+### Credentials via `.env`
 
-Produces:
+Credentials are read from the environment, with a local `.env` taking precedence (`cmd/authorize` and the integration tests load it automatically):
 
 ```
 TRADESTATION_CLIENT_ID=...
 TRADESTATION_CLIENT_SECRET=...
 TRADESTATION_REFRESH_TOKEN=...
 ```
+
+If you keep these in AWS SSM, `task env` fetches them into `.env` via the AWS CLI (the Go module itself has no AWS dependency):
+
+```
+task env
+```
+
+Uses `AWS_PROFILE` if set, otherwise `joe-prod`.
 
 ## Quickstart
 
@@ -236,7 +240,7 @@ go test -tags=integration -run TestIntegration_ -v ./...
 ```
 
 - Requires `TRADESTATION_CLIENT_ID`, `TRADESTATION_CLIENT_SECRET`, `TRADESTATION_REFRESH_TOKEN`.
-- Auto-loads `.env` from the current directory if present (use `cmd/envgen` to generate).
+- Auto-loads `.env` from the current directory if present (use `task env` to generate).
 - Skips (not fails) when credentials are missing.
 - Integration tests log the full JSON response so you can manually inspect the decoded sandbox data.
 
@@ -251,7 +255,7 @@ go test -run TestName -v     # single test
 ## Project conventions
 
 - **`docs/` is gitignored** — design docs and plans are local-only.
-- **No operational dependencies in the root package** — AWS SDK, env loaders, etc. live under `cmd/<tool>/`, never in `tradestation.*`.
+- **No operational dependencies in the module** — the root package and the `authorize` CLI are stdlib-only. Credential fetching from AWS SSM lives in the `Taskfile` (via the AWS CLI), never in Go.
 - **Commit style:** Conventional Commits + [gitmoji](https://gitmoji.dev/), lowercase: `type(scope): :emoji: short description`.
 - **Branching:** feature work happens on `feat/<name>` branches; never commit directly to `main`.
 
