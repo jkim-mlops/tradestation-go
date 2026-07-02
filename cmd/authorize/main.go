@@ -62,6 +62,11 @@ const completionPage = `<!DOCTYPE html>
   <div class="logo">%s</div>
   <h1>Authorization complete</h1>
   <p>You can close this tab.</p>
+  <script>
+    // Strip the code/state query params from the address bar and history so
+    // the authorization code doesn't linger after it's been exchanged.
+    history.replaceState(null, "", location.pathname);
+  </script>
 </body>
 </html>`
 
