@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -27,6 +28,42 @@ const (
 	defaultRedirect = "http://localhost:8080"
 	defaultScopes   = "openid offline_access MarketData ReadAccount Trade profile"
 )
+
+//go:embed tradestation.svg
+var logoSVG string
+
+// completionPage is shown in the browser once the OAuth callback lands. The
+// %s is replaced with the inline TradeStation logo.
+const completionPage = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TradeStation authorization complete</title>
+<style>
+  html, body { height: 100%%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background: #262626;
+    color: rgba(255, 255, 255, 0.85);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    text-align: center;
+  }
+  .logo { width: 300px; max-width: 70vw; margin-bottom: 2rem; }
+  .logo svg { width: 100%%; height: auto; display: block; }
+  h1 { font-weight: 500; font-size: 1.4rem; margin: 0 0 0.5rem; }
+  p { font-weight: 300; font-size: 1rem; color: rgba(255, 255, 255, 0.6); margin: 0; }
+</style>
+</head>
+<body>
+  <div class="logo">%s</div>
+  <h1>Authorization complete</h1>
+  <p>You can close this tab.</p>
+</body>
+</html>`
 
 func main() {
 	idFlag := flag.String("id", "", "OAuth client ID (overrides TRADESTATION_CLIENT_ID)")
@@ -78,7 +115,8 @@ func main() {
 			errCh <- err
 			return
 		}
-		fmt.Fprintln(w, "<html><body><h2>TradeStation authorization complete.</h2><p>You can close this tab.</p></body></html>")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, completionPage, logoSVG)
 		codeCh <- code
 	})
 
