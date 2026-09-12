@@ -269,10 +269,56 @@ type Position struct {
 
 // Order Execution types
 
+// OrderStatus is the status code of an order. Match on it rather than on
+// Order.StatusDescription, which is prose for people: a filled order arrives as
+//
+//	"Status": "FLL", "StatusDescription": "Filled"
+//
+// Codes are from TradeStation's published order schema; FLL and REJ are also
+// confirmed against the v3 Sim API.
+type OrderStatus string
+
+const (
+	// OrderStatusOpen (OPN): sent to the market and working.
+	OrderStatusOpen OrderStatus = "OPN"
+	// OrderStatusReceived (ACK): the new order request is pending.
+	OrderStatusReceived OrderStatus = "ACK"
+	// OrderStatusCancelPending (UCN): a cancel has been requested and the order
+	// is still active.
+	OrderStatusCancelPending OrderStatus = "UCN"
+	// OrderStatusFilled (FLL): filled in its entirety. Terminal.
+	OrderStatusFilled OrderStatus = "FLL"
+	// OrderStatusPartiallyFilledCanceled (FLP): partially filled and the
+	// remainder canceled ("UROut"). Terminal — the executed quantity is all
+	// there will be.
+	OrderStatusPartiallyFilledCanceled OrderStatus = "FLP"
+	// OrderStatusPartiallyFilled (FPR): partially filled and still working.
+	OrderStatusPartiallyFilled OrderStatus = "FPR"
+	// OrderStatusCanceled (OUT): canceled.
+	OrderStatusCanceled OrderStatus = "OUT"
+	// OrderStatusRejected (REJ): the network or the market refused the order.
+	OrderStatusRejected OrderStatus = "REJ"
+	// OrderStatusTradeServerCanceled (TSC): canceled by TradeStation. Not
+	// necessarily final.
+	OrderStatusTradeServerCanceled OrderStatus = "TSC"
+	// OrderStatusExpired (EXP): not filled within its duration. The published
+	// enum spells it "Exp" while its description says EXP; unconfirmed on v3.
+	OrderStatusExpired OrderStatus = "EXP"
+	// OrderStatusBroken (BRO): an executed trade was broken. Not necessarily
+	// final — it may be reinstated to open.
+	OrderStatusBroken OrderStatus = "BRO"
+	// OrderStatusExchangeCanceled (CAN): canceled by the exchange.
+	OrderStatusExchangeCanceled OrderStatus = "CAN"
+	// OrderStatusTooLate (LAT): too late to cancel. Not final.
+	OrderStatusTooLate OrderStatus = "LAT"
+	// OrderStatusQueued (DON): held by TradeStation to be placed later.
+	OrderStatusQueued OrderStatus = "DON"
+)
+
 type Order struct {
 	OrderID           string             `json:"OrderID"`
 	AccountID         string             `json:"AccountID"`
-	Status            string             `json:"Status"`
+	Status            OrderStatus        `json:"Status"`
 	StatusDescription string             `json:"StatusDescription"`
 	OrderType         string             `json:"OrderType"`
 	Duration          string             `json:"Duration"`

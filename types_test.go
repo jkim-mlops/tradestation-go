@@ -184,3 +184,19 @@ func TestActivationTrigger_JSONDecode(t *testing.T) {
 		t.Errorf("decoded wrong: %+v", at)
 	}
 }
+
+// A filled order carries its status as a code, with the prose alongside. The
+// payload is as returned by the v3 Sim API.
+func TestOrder_StatusDecode(t *testing.T) {
+	raw := `{"OrderID":"970693640","Status":"FLL","StatusDescription":"Filled"}`
+	var o Order
+	if err := json.Unmarshal([]byte(raw), &o); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if o.Status != OrderStatusFilled {
+		t.Errorf("Status = %q, want %q", o.Status, OrderStatusFilled)
+	}
+	if string(o.Status) == o.StatusDescription {
+		t.Errorf("Status and StatusDescription decoded the same: %q", o.Status)
+	}
+}
